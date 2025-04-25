@@ -13,7 +13,17 @@ def create_job(job_data: dict):
     return {"msg": "Job posted", "job_id": job_data["job_id"]}
 
 def list_jobs():
-    return list(db.jobs.find({}, {"_id": 0}))
+    now = datetime.now(timezone.utc)
+    two_days_ago = now - timedelta(days=2)
+    jobs = db.jobs.find({}, {"_id": 0})
+    job_list = []
+    for job in jobs:
+        job["isNew"] = job["posted_at"].replace(tzinfo=timezone.utc) >= two_days_ago
+        company = db.users.find_one({"user_id": job["employer_id"]}, {"_id": 0, "company_name": 1})
+        print(job["employer_id"],company)
+        job["company"] = company["company_name"] if company else None
+        job_list.append(job)
+    return job_list
 
 def get_job_by_title(title: str):
     return db.jobs.find_one({"title": title}, {"_id": 0})
