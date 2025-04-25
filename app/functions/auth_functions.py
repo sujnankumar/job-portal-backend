@@ -15,7 +15,10 @@ def register_user(user_data: dict):
     user_data["register_time"] = datetime.now(timezone.utc)
     user_data["user_id"] = str(uuid.uuid4())
     db.users.insert_one(user_data)
-    return {"msg": "User registered"}
+    user_data.pop("_id", None)
+    user_data.pop("password", None)
+    print(user_data)
+    return {"msg": "User registered", "data": user_data}
 
 def is_email_registered(email: str):
     return db.users.find_one({"email": email}) is not None
