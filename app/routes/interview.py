@@ -33,17 +33,17 @@ async def schedule_interview(request: Request, authorization: str = Header(None)
     )
 
 @router.get("/my_interviews")
-def my_interviews(authorization: str = Header(None)):
+async def my_interviews(authorization: str = Header(None)):
     user_id, _ = get_current_user_id_and_type(authorization)
     return interview_functions.get_interviews_for_user(user_id)
 
 @router.get("/notifications")
-def get_notifications(authorization: str = Header(None)):
+async def get_notifications(authorization: str = Header(None)):
     user_id, _ = get_current_user_id_and_type(authorization)
     return interview_functions.get_notifications(user_id)
 
 @router.post("/notifications/mark_read/{notification_id}")
-def mark_notification_read(notification_id: str, authorization: str = Header(None)):
+async def mark_notification_read(notification_id: str, authorization: str = Header(None)):
     user_id, _ = get_current_user_id_and_type(authorization)
     if interview_functions.mark_notification_read(user_id, notification_id):
         return {"msg": "Notification marked as read"}

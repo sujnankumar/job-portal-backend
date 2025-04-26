@@ -13,18 +13,15 @@ def get_current_user(request: Request):
     return user_data
 
 @router.post("/save-job/{job_id}")
-def save_job(job_id: str, user=Depends(get_current_user)):
+async def save_job(job_id: str, user=Depends(get_current_user)):
     if user["user_type"] != "job_seeker":
         raise HTTPException(status_code=403, detail="Only jobseekers can save jobs")
-
     job = db.jobs.find_one({"job_id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
     already_saved = db.saved_jobs.find_one({"user_id": user["user_id"], "job_id": job_id})
     if already_saved:
         raise HTTPException(status_code=400, detail="Job already saved")
-
     saved_job = {
         **job,
         "user_id": user["user_id"],
@@ -33,17 +30,22 @@ def save_job(job_id: str, user=Depends(get_current_user)):
     db.saved_jobs.insert_one(saved_job)
     return {"message": "Job saved successfully"}
 
+@router.get("/is-saved/{job_id}")
+async def is_job_saved(job_id: str, user=Depends(get_current_user)):
+    if user["user_type"] != "job_seeker":
+        raise HTTPException(status_code=403, detail="Only jobseekers can check saved jobs")
+    is_saved = db.saved_jobs.find_one({"user_id": user["user_id"], "job_id": job_id})
+    return {"is_saved": bool(is_saved)}
 
 @router.get("/saved-jobs")
-def get_saved_jobs(user=Depends(get_current_user)):
+async def get_saved_jobs(user=Depends(get_current_user)):
     if user["user_type"] != "job_seeker":
         raise HTTPException(status_code=403, detail="Only jobseekers can view saved jobs")
-
     saved_jobs = list(db.saved_jobs.find({"user_id": user["user_id"]}, {"_id": 0}))
     return {"saved_jobs": saved_jobs}
 
 @router.delete("/remove-saved-job/{job_id}")
-def remove_saved_job(job_id: str, user=Depends(get_current_user)):
+async def remove_saved_job(job_id: str, user=Depends(get_current_user)):
     if user["user_type"] != "job_seeker":
         raise HTTPException(status_code=403, detail="Only jobseekers can remove saved jobs")
     result = db.saved_jobs.delete_one({"user_id": user["user_id"], "job_id": job_id})

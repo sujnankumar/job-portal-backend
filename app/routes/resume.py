@@ -21,7 +21,7 @@ async def upload_resume(file: UploadFile = File(...), user_id: str = Depends(get
     return resume_functions.upload_resume(user_id, content, file.filename, file.content_type)
 
 @router.get("/download_resume")
-def download_resume(user_id: str = Depends(get_current_user_id)):
+async def download_resume(user_id: str = Depends(get_current_user_id)):
     result = resume_functions.get_resume(user_id)
     if not result:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -29,14 +29,13 @@ def download_resume(user_id: str = Depends(get_current_user_id)):
     return Response(content=file.read(), media_type=meta["content_type"], headers={"Content-Disposition": f"attachment; filename={meta['filename']}"})
 
 @router.delete("/delete_resume")
-def delete_resume(user_id: str = Depends(get_current_user_id)):
+async def delete_resume(user_id: str = Depends(get_current_user_id)):
     if resume_functions.delete_resume(user_id):
         return {"msg": "Resume deleted"}
     raise HTTPException(status_code=404, detail="Resume not found")
 
 @router.get("/list_resumes")
-def list_resumes(authorization: str = Header(None)):
-    # Only HR/admin can list all resumes, add your own user_type check if needed
+async def list_resumes(authorization: str = Header(None)):
     token = authorization.split(" ", 1)[1] if authorization else None
     payload = verify_token(token) if token else None
     if not payload or payload.get("user_type") not in ["employer", "admin"]:
@@ -52,10 +51,9 @@ async def parse_resume_endpoint(file: UploadFile = File(...), user_id: str = Dep
     return parsed
 
 @router.get("/preview_resume")
-def preview_resume(user_id: str = Depends(get_current_user_id)):
+async def preview_resume(user_id: str = Depends(get_current_user_id)):
     result = resume_functions.get_resume(user_id)
     if not result:
         raise HTTPException(status_code=404, detail="Resume not found")
     file, meta = result
-    # Use 'inline' to preview in browser
     return Response(content=file.read(), media_type=meta["content_type"], headers={"Content-Disposition": f"inline; filename={meta['filename']}"})

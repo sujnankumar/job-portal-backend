@@ -18,10 +18,9 @@ def get_current_user(request: Request):
 
 # GET /applications/my-applications
 @router.get("/applications/my-applications")
-def get_my_applications(user=Depends(get_current_user)):
+async def get_my_applications(user=Depends(get_current_user)):
     user_id = user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user data")
-
     applications = list(db.applications.find({"user_id": user_id}, {"_id": 0}))
     return {"applications": applications}
