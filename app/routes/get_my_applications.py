@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.utils.jwt_handler import verify_token
 from app.db import db
+from bson import ObjectId
 
 router = APIRouter()
 
@@ -22,8 +23,7 @@ async def get_my_applications(user=Depends(get_current_user)):
     user_id = user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user data")
-    applications = list(db.applications.find({"user_id": user_id}, {"_id": 0}))
-
+    applications = list(db.applications.find({"user_id": user_id}))
     enriched = []
     for app in applications:
         job = db.jobs.find_one({"job_id": app["job_id"]})
@@ -32,13 +32,14 @@ async def get_my_applications(user=Depends(get_current_user)):
         employer = db.users.find_one({"user_id": job.get("employer_id")})
         company_name = employer["company_name"] if employer and "company_name" in employer else None
         enriched.append({
+            "id": str(app["_id"]), 
             "jobTitle": job.get("title"),
             "company": company_name,
             "logo": job.get("logo", "/abstract-circuit-board.png"),
             "location": job.get("location"),
             "appliedDate": app["applied_at"].strftime("%b %d, %Y") if app.get("applied_at") else None,
             "status": app.get("status", "Under Review"),
-            **app
+            **{k: v for k, v in app.items() if k != "_id"}  # exclude _id to avoid JSON issues
         })
     return {"applications": enriched}
 
