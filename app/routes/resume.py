@@ -5,6 +5,7 @@ from app.utils.jwt_handler import verify_token
 router = APIRouter()
 
 def get_current_user_id(authorization: str = Header(None)):
+    print(authorization)
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
     token = authorization.split(" ", 1)[1]
@@ -57,3 +58,21 @@ async def preview_resume(user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=404, detail="Resume not found")
     file, meta = result
     return Response(content=file.read(), media_type=meta["content_type"], headers={"Content-Disposition": f"inline; filename={meta['filename']}"})
+
+@router.get("/get_profile_resume")
+async def get_profile_resume(user_id: str = Depends(get_current_user_id)):
+    result = resume_functions.get_resume(user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    file, meta = result
+    file_content = file.read()
+    response = Response(
+        content=file_content,
+        media_type=meta["content_type"],
+        headers={
+            "Content-Disposition": f"attachment; filename={meta['filename']}"
+        }
+    )
+    # Expose headers for CORS
+    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Type"
+    return response

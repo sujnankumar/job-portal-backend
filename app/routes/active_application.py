@@ -16,7 +16,7 @@ def get_current_user(request: Request):
     return user_data
 
 @router.get("/applications/active")
-def get_active_applications(user=Depends(get_current_user)):
+async def get_active_applications(user=Depends(get_current_user)):
     user_id = user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user data")
@@ -29,4 +29,22 @@ def get_active_applications(user=Depends(get_current_user)):
         {"_id": 0}
     ))
 
-    return {"active_applications": active_applications}
+    enriched = []
+    for app in active_applications:
+        job = db.jobs.find_one({"job_id": app["job_id"]})
+        if not job:
+            continue
+        employer = db.users.find_one({"user_id": job.get("employer_id")})
+        company_name = employer["company_name"] if employer and "company_name" in employer else None
+        enriched.append({
+            "jobTitle": job.get("title"),
+            "company": company_name,
+            "logo": job.get("logo", "/abstract-circuit-board.png"),
+            "location": job.get("location"),
+            "appliedDate": app["applied_at"].strftime("%b %d, %Y") if app.get("applied_at") else None,
+            "status": app.get("status", "Under Review"),
+            # Optionally include the rest of the application fields
+            **app
+        })
+
+    return {"active_applications": enriched}

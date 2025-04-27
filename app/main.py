@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import auth, user, job,application, get_application, save_job, interview, resume, email,recommendation_routes, get_my_applications
+from app.routes import auth, user, job,application, get_application, save_job, interview, resume, email,recommendation_routes, get_my_applications, active_application
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.functions import job_functions
@@ -33,13 +33,14 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(user.router, prefix="/api/user", tags=["User"])
 app.include_router(job.router, prefix="/api/job", tags=["Job"])
 app.include_router(application.router, prefix="/api/application", tags=["Application"])
-app.include_router(get_application.router, prefix="/api/jobs", tags=["Applications"])
-app.include_router(save_job.router, prefix="/api/jobs", tags=["Save Jobs"])
+app.include_router(get_application.router, prefix="/api/ga", tags=["Applications"])
+app.include_router(save_job.router, prefix="/api/sj", tags=["Save Jobs"])
 app.include_router(recommendation_routes.router, prefix="/api", tags=["Recommendations"])
-app.include_router(get_my_applications.router, prefix="/api", tags=["Get My Applications"]) 
+app.include_router(get_my_applications.router, prefix="/api/gma", tags=["Get My Applications"]) 
 app.include_router(resume.router, prefix="/api/resume", tags=["Resume"])
 app.include_router(interview.router, prefix="/api/interview", tags=["Interview"])
 app.include_router(email.router, prefix="/api/email", tags=["Email"])
+app.include_router(active_application.router, prefix="/api/aa", tags=["active_application"])
 
 @app.get("/")
 def root():

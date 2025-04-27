@@ -84,7 +84,7 @@ def upload_resume(user_id: str, file, filename: str, content_type: str):
         gfs.delete(old["file_id"])
         db.resumes.delete_one({"user_id": user_id})
     file_id = gfs.put(file, filename=filename, content_type=content_type, upload_date=datetime.utcnow())
-    parsed_data = parse_resume(file.read(), content_type)
+    parsed_data = parse_resume(file, content_type)
     db.resumes.insert_one({
         "user_id": user_id,
         "file_id": file_id,
