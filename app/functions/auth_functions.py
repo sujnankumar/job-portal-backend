@@ -14,6 +14,15 @@ def register_user(user_data: dict):
     user_data["password"] = hash_password(user_data["password"])
     user_data["register_time"] = datetime.now(timezone.utc)
     user_data["user_id"] = str(uuid.uuid4())
+    user_data["onboarding"] = {
+        "isComplete": False,
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "formData": {},
+        "validationStatus": {},
+        "validationMessages": {},
+        "lastStep": 0,
+        "lastUpdated": datetime.now(timezone.utc).isoformat()
+    }
     db.users.insert_one(user_data)
     user_data.pop("_id", None)
     user_data.pop("password", None)
@@ -34,7 +43,8 @@ def login_user(email: str, password: str):
         "first_name": user["first_name"],
         "last_name": user["last_name"]
     })
-    return {"access_token": token, "token_type": "bearer"}
+    onboarding = user["onboarding"]
+    return {"access_token": token, "token_type": "bearer", "onboarding": onboarding}
 
 def update_user_profile_by_email(email: str, update_data: dict):
     result = db.users.update_one({"email": email}, {"$set": update_data})
