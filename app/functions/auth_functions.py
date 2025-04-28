@@ -26,7 +26,6 @@ def register_user(user_data: dict):
     db.users.insert_one(user_data)
     user_data.pop("_id", None)
     user_data.pop("password", None)
-    print(user_data)
     return {"msg": "User registered", "data": user_data}
 
 def is_email_registered(email: str):
@@ -51,3 +50,22 @@ def update_user_profile_by_email(email: str, update_data: dict):
     if result.modified_count == 1:
         return {"msg": "Profile updated"}
     return None
+    
+def onboard_user(user_data: dict, onboarding_data: dict):
+    user = db.users.find_one({"email": user_data["email"]})
+    if not user:
+        return {"msg": "User not found"}
+    
+    updated_onboarding = {
+        "isComplete": True,
+        "formData": onboarding_data,
+        "validationStatus": {},
+        "validationMessages": {},
+        "lastStep": 0,
+        "lastUpdated": datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.users.update_one({"email": user_data["email"]}, {"$set": {"onboarding": updated_onboarding}})
+    user["onboarding"] = updated_onboarding
+    user["_id"] = str(user["_id"])  # Convert ObjectId to string
+    return {"msg": "Onboarding complete", "user": user}

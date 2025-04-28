@@ -14,4 +14,5 @@ def get_current_user(request: Request):
 @router.get("/me")
 async def get_me(user=Depends(get_current_user)):
     user_info = db.users.find_one({"email": user["email"]}, {"_id": 0, "password": 0})
+    print(user_info)
     return user_info
