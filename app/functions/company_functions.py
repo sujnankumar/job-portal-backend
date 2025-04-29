@@ -22,3 +22,8 @@ def get_company_by_id(company_id: str):
     if company:
         company.pop("_id", None)  # Remove MongoDB's internal _id field
         return company
+
+def get_all_companies():
+    companies = list(db.companies.find({}, {"_id": 0, "company_id": 1, "company_name": 1}))
+    unique_companies = {company["company_id"]: company for company in companies}.values()
+    return list(unique_companies)

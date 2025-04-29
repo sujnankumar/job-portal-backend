@@ -203,7 +203,7 @@ async def get_featured_jobs():
 
         
         jobs_sorted = sorted(jobs, key=lambda job: popular_job_ids.index(job["job_id"]))
-        print("featured",jobs_sorted)
+
         return {"featured_jobs": jobs_sorted}
 
     except Exception as e:

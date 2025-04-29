@@ -25,11 +25,10 @@ async def get_company_details(authorization: str = Header(None)):
     if user.get("user_type") != "employer":
         raise HTTPException(status_code=403, detail="Only employers have company details")
     job_title = user.get("onboarding", {}).get("formData", {}).get("jobPosition")
-    company = db.companies.find_one({"employer_id": user.get("user_id")}, {"_id": 0})
+    company = db.companies.find_one({"company_id": user.get("company_id")}, {"_id": 0})
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     company["job_title"] = job_title
-    print(job_title)
     return company
 
 @router.get("/job_stats")

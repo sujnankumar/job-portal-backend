@@ -53,6 +53,8 @@ async def onboarding(request: Request):
         
         company_data = {
             "company_name": data.get("companyName", ""),
+            "company_email": data.get("companyEmail", ""),
+            "company_phone": data.get("companyPhone", ""),
             "description": data.get("description", ""),
             "founded_year": data.get("foundedYear"),
             "employee_count": data.get("companySize"),
@@ -61,8 +63,14 @@ async def onboarding(request: Request):
             "logo": data.get("logo")
         }
 
-        result = company_functions.add_company(company_data)
-        company = result["data"]
+        isNewCompany = data.get("isNewCompany", False)
+        if isNewCompany:
+            result = company_functions.add_company(company_data)
+            company = result["data"]
+        else:
+            company = company_functions.get_company_by_id(data.get("companyId"))
+            if not company:
+                raise HTTPException(status_code=404, detail="Company not found")
         result = auth_functions.onboard_user(user_data, data, company)
 
         if not result:
