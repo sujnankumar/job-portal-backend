@@ -110,6 +110,3 @@ async def get_profile_photo(authorization: str = Header(None)):
     file_id = user["profile_photo_id"]
     file = gfs.get(ObjectId(file_id))
     return Response(content=file.read(), media_type=file.content_type, headers={"Content-Disposition": f"inline; filename={file.filename}"})
-
-
-

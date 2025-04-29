@@ -7,7 +7,11 @@ def create_job(job_data: dict):
     now = datetime.now(timezone.utc)
     validity_days = int(job_data.get("validity_days", 15))
     job_data["posted_at"] = now
-    job_data["expires_at"] = now + timedelta(days=validity_days)
+    if "application_deadline" in job_data:
+        # Convert application_deadline string (e.g., "2025-05-01") to a timezone-aware datetime object
+        job_data["expires_at"] = datetime.strptime(job_data["application_deadline"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        job_data["expires_at"] = now + timedelta(days=validity_days)
     job_data["status"] = "active"
     db.jobs.insert_one(job_data)
     return {"msg": "Job posted", "job_id": job_data["job_id"]}
