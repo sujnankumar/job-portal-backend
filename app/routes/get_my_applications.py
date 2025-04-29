@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from bson import ObjectId
+from app.functions import company_functions
 
 router = APIRouter()
 
@@ -30,11 +31,11 @@ async def get_my_applications(user=Depends(get_current_user)):
         if not job:
             continue
         employer = db.users.find_one({"user_id": job.get("employer_id")})
-        company_name = employer["company_name"] if employer and "company_name" in employer else None
+        company = company_functions.get_company_by_id(job.get("company_id"))
         enriched.append({
             "id": str(app["_id"]), 
             "jobTitle": job.get("title"),
-            "company": company_name,
+            "company": company.get("company_name", "") if company else employer.get("company_name", ""),
             "logo": job.get("logo", "/abstract-circuit-board.png"),
             "location": job.get("location"),
             "appliedDate": app["applied_at"].strftime("%b %d, %Y") if app.get("applied_at") else None,

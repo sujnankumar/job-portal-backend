@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException, Header
-from app.functions import job_functions
+from app.functions import job_functions, auth_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
 
@@ -24,7 +24,9 @@ async def post_job(request: Request, authorization: str = Header(None)):
     if payload.get("user_type") != "employer":
         raise HTTPException(status_code=403, detail="Only employers can post jobs")
     data = await request.json()
+    user = auth_functions.get_user_by_id(payload.get("user_id"))
     data["employer_id"] = payload.get("user_id")
+    data["company_id"] = user.get("company_id", "")
     # Set job visibility, default to public if not provided
     data["visibility"] = data.get("visibility", "public")
     return job_functions.create_job(data)

@@ -51,7 +51,7 @@ def update_user_profile_by_email(email: str, update_data: dict):
         return {"msg": "Profile updated"}
     return None
     
-def onboard_user(user_data: dict, onboarding_data: dict):
+def onboard_user(user_data: dict, onboarding_data: dict, company_data: dict):
     user = db.users.find_one({"email": user_data["email"]})
     if not user:
         return {"msg": "User not found"}
@@ -65,7 +65,20 @@ def onboard_user(user_data: dict, onboarding_data: dict):
         "lastUpdated": datetime.now(timezone.utc).isoformat()
     }
     
-    db.users.update_one({"email": user_data["email"]}, {"$set": {"onboarding": updated_onboarding}})
+    update_fields = {
+        "onboarding": updated_onboarding,
+        "company_id": company_data.get("company_id")
+    }
+    
+    db.users.update_one({"email": user_data["email"]}, {"$set": update_fields})
     user["onboarding"] = updated_onboarding
+    user["company_id"] = company_data["company_id"]
     user["_id"] = str(user["_id"])  # Convert ObjectId to string
     return {"msg": "Onboarding complete", "user": user}
+
+def get_user_by_id(user_id: str):
+    user = db.users.find_one({"user_id": user_id})
+    if not user:
+        return None
+    user["_id"] = str(user["_id"])  # Convert ObjectId to string
+    return user

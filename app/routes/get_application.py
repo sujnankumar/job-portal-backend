@@ -3,7 +3,9 @@ from app.utils.jwt_handler import verify_token
 from app.db import db
 from fastapi import Request
 from bson import ObjectId
-
+from app.functions import company_functions, auth_functions, resume_functions
+import base64
+from datetime import datetime, timezone
 router = APIRouter()
 
 def get_current_user(request: Request):
@@ -44,21 +46,76 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
     job = db.jobs.find_one({"job_id": application["job_id"]})
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    company = company_functions.get_company_by_id(job.get("company_id"))
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
     
-    application["job"] = {
-        "logo": job.get("logo", ""),
-        "company": job.get("company_name", ""),
-        "location": job.get("location", ""),
-    }
+    user_data = auth_functions.get_user_by_id(application["user_id"])
+    if not user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    print(company)
+    application["job"] =  {
+            "title": job.get("title", ""),
+            "company_name": company.get("company_name", ""),
+            "description": company.get("description", ""),
+            "founded_year": company.get("founded_year"),
+            "employee_count": company.get("employee_count"),
+            "location": company.get("location"),
+            "industry": company.get("industry"),
+            "logo": company.get("logo")
+        }
+    
     application["personalInfo"] = {
-        "name": user.get("first_name", "") + " " + user.get("last_name", ""),
-        "email": user.get("email", ""),
-        "phone": user.get("phone", ""),
-        "website": user.get("website", ""),
-        "linkedin": user.get("linkedin", "")
+        "name": user_data.get("first_name", "") + " " + user.get("last_name", ""),
+        "email": user_data.get("email", ""),
+        "phone": user_data.get("phone", ""),
+        "website": user_data.get("website", "No website added"),
+        "linkedin": user_data.get("linkedin", "No LinkedIn Profile added")
     }
-    # Fix ObjectId serialization issue
+    
+    file, resume_data = resume_functions.get_resume_by_file_id(application.get("resume_file_id", None))
+    print(type(file), type(resume_data))
+
+    application["resume"] = {
+        "file": base64.b64encode(file).decode("utf-8") if file else None,
+        "filename": resume_data.get("filename", None),
+        "upload_date": resume_data.get("upload_date", None)
+    }
+
     application["_id"] = str(application["_id"])
     if "job" in application and "_id" in application["job"]:
         application["job"]["_id"] = str(application["job"]["_id"])
+
+    status_timeline = {}
+    if application.get("status") == "Scheduled":
+        status_timeline = {
+            "status": "schdeduled",
+            "date": application.get("interview_date", None),
+            "description": "Interview scheduled"
+        }
+    elif application.get("status") == "Selected":
+        status_timeline = {
+            "status": "selected",
+            "date": application.get("selection_date", None),
+            "description": "Application selected"
+        }
+    elif application.get("status") == "Rejected":
+        status_timeline = {
+            "status": "rejected",
+            "date": application.get("rejection_date", None),
+            "description": "Application rejected"
+        }
+    else:
+        status_timeline = {
+            "status": "pending",
+            "date": application.get("updated_at", datetime.utcnow()),
+            "description": "Application under review"
+        }
+    application['timeline'] = [
+        {"status": "applied", "date": application.get("applied_at", None), "description": "Application submitted"},
+        status_timeline
+    ]
+    
     return {"application": application}
