@@ -30,32 +30,39 @@ async def get_applications_for_job(job_id: str = Path(...), user=Depends(get_cur
 from fastapi import APIRouter, HTTPException, Depends, Path
 from bson import ObjectId
 
-@router.get("/application/{app_id}")
+@router.get("/application/app_id/{app_id}")
 async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_current_user)):
     if not ObjectId.is_valid(app_id):
         raise HTTPException(status_code=400, detail="Invalid application ID format")
 
     application = db.applications.find_one({"_id": ObjectId(app_id)})
-    
+    print(application)
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
     if user["user_id"] != application["user_id"]:
         raise HTTPException(status_code=403, detail="Not authorized to view this application")
     
+    
     job = db.jobs.find_one({"job_id": application["job_id"]})
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
+        job = {}
+    
     company = company_functions.get_company_by_id(job.get("company_id"))
     if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
+        company = {}
     
     user_data = auth_functions.get_user_by_id(application["user_id"])
     if not user_data:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+        user_data = {}
+
     print(company)
+    salary_str = ""
+    if job.get("show_salary", False):
+        salary_str = str(job.get("min_salary", 0)) + " - " + str(job.get("max_salary", 0))
+    else:
+        salary_str = "Not disclosed"
+
     application["job"] =  {
             "title": job.get("title", ""),
             "company_name": company.get("company_name", ""),
@@ -64,7 +71,10 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
             "employee_count": company.get("employee_count"),
             "location": company.get("location"),
             "industry": company.get("industry"),
-            "logo": company.get("logo")
+            "logo": company.get("logo"),
+            "expires_at": job.get("expires_at"),
+            "employment_type": job.get("employment_type"),
+            "salary": salary_str,
         }
     
     application["personalInfo"] = {
@@ -76,15 +86,16 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
     }
     
     file, resume_data = resume_functions.get_resume_by_file_id(application.get("resume_file_id", None))
-    print(type(file), type(resume_data))
-
-    application["resume"] = {
-        "file": base64.b64encode(file).decode("utf-8") if file else None,
-        "filename": resume_data.get("filename", None),
-        "upload_date": resume_data.get("upload_date", None)
-    }
+    
+    if file and resume_data:
+        application["resume"] = {
+            "file": base64.b64encode(file).decode("utf-8") if file else None,
+            "filename": resume_data.get("filename", None),
+            "upload_date": resume_data.get("upload_date", None)
+        }
 
     application["_id"] = str(application["_id"])
+
     if "job" in application and "_id" in application["job"]:
         application["job"]["_id"] = str(application["job"]["_id"])
 

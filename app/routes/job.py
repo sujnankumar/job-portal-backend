@@ -135,3 +135,76 @@ async def get_job_with_saved_status(job_id: str, request: Request):
         job["company_details"] = company
     is_saved = db.saved_jobs.find_one({"user_id": user["user_id"], "job_id": job_id})
     return {"job": job, "is_saved": bool(is_saved)}
+
+@router.get("/categories/popular")
+async def get_popular_job_categories():
+    return job_functions.get_popular_job_categories()
+
+@router.get("/featured-jobs")
+async def get_featured_jobs():
+    try:
+        application_pipeline = [
+            {
+                "$group": {
+                    "_id": "$job_id",
+                    "application_count": {"$sum": 1}
+                }
+            },
+            {
+                "$sort": {"application_count": -1}
+            },
+            {
+                "$limit": 10
+            }
+        ]
+        popular_jobs = list(db.applications.aggregate(application_pipeline))
+        popular_job_ids = [job["_id"] for job in popular_jobs]
+
+        if not popular_job_ids:
+            return {"featured_jobs": []}
+
+        jobs = list(db.jobs.find({
+            "job_id": {"$in": popular_job_ids},
+            "status": "active"  # Only active jobs
+        }, {
+            "_id": 0,
+            "company_id": 1,
+            "job_id": 1,
+            "title": 1,
+            "description": 1,
+            "location": 1,
+            "show_salary": 1,
+            "min_salary": {"$cond": {"if": "$show_salary", "then": "$min_salary", "else": None}},
+            "max_salary": {"$cond": {"if": "$show_salary", "then": "$max_salary", "else": None}},
+            "posted_at": 1,
+            "employment_type": 1,
+        }))  # Fetch relevant fields
+        
+        # Step 3: Fetch company details for the jobs
+        company_ids = list({
+            str(job.get("company_id")) for job in jobs if job.get("company_id")
+        })
+
+        # Step 3: Fetch company details
+        companies = list(db.companies.find(
+            {"company_id": {"$in": company_ids}},
+            {"_id": 0, "company_id": 1, "company_name": 1, "logo": 1}
+        ))
+
+        # Make sure keys match: use str keys for consistency
+        company_map = {str(company["company_id"]): company for company in companies}
+
+        # Attach company details to each job
+        for job in jobs:
+            cid = str(job.get("company_id"))
+            company_details = company_map.get(cid, {})
+            job["company_name"] = company_details.get("company_name", "")
+            job["logo"] = company_details.get("logo", "")
+
+        
+        jobs_sorted = sorted(jobs, key=lambda job: popular_job_ids.index(job["job_id"]))
+        print("featured",jobs_sorted)
+        return {"featured_jobs": jobs_sorted}
+
+    except Exception as e:
+        return {"error": str(e)}
