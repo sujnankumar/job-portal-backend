@@ -160,10 +160,29 @@ async def get_job_applications(job_id: str, authorization: str = Header(None)):
         "companyLogo": company_logo,
     }
     # Applications
-    applications = list(db.applications.find({"job_id": job_id}, {"_id": 0}))
+    applications = list(db.applications.find(
+        {"job_id": job_id},
+        {
+            "_id": 1,
+            "job_id": 1,
+            "user_id": 1,
+            "email": 1,
+            "cover_letter": 1,
+            "linked_in": 1,
+            "portfolio": 1,
+            "resume_file_id": 1,
+            "resume_filename": 1,
+            "resume_content_type": 1,
+            "status": 1,
+            "applied_at": 1,
+            "interview_date": 1,
+            "interview_time": 1
+        }
+    ))
     enriched_apps = []
     for app in applications:
-        candidate = db.users.find_one({"user_id": app["user_id"]}, {"_id": 0, "first_name": 1, "last_name": 1, "email": 1, "phone": 1, "location": 1, "avatar": 1})
+        candidate = db.users.find_one({"user_id": app["user_id"]}, {"_id": 0, "user_id": 1, "first_name": 1, "last_name": 1, "email": 1, "phone": 1, "location": 1, "avatar": 1})
+        print("candidate :",candidate)
         if not candidate:
             continue
         enriched_apps.append({
@@ -178,12 +197,13 @@ async def get_job_applications(job_id: str, authorization: str = Header(None)):
             },
             "appliedDate": app["applied_at"].strftime("%Y-%m-%d") if app.get("applied_at") else None,
             "status": app.get("status", "review"),
-            "resumeUrl": f"/api/application/download_resume/{app.get('resume_file_id')}" if app.get("resume_file_id") else None,
+            # "resumeUrl": f"/api/application/download_resume/{app.get('resume_file_id')}" if app.get("resume_file_id") else None,
             "coverLetter": app.get("cover_letter", ""),
             "matchScore": app.get("match_score", 0),
-            "interviewDate": app.get("interview_date"),
-            "interviewTime": app.get("interview_time"),
+            "interviewDate": app.get("interview_date", None),
+            "interviewTime": app.get("interview_time", None),
         })
+        print(enriched_apps)
     return {
         "jobDetails": job_details,
         "applications": enriched_apps
