@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from app.functions import auth_functions
+from app.functions import auth_functions, company_functions
 from app.utils.jwt_handler import verify_token
 
 router = APIRouter()
@@ -49,10 +49,25 @@ async def onboarding(request: Request):
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    
-    result = auth_functions.onboard_user(user_data, data)
-    
-    if not result:
-        raise HTTPException(status_code=401, detail="Could not complete onboarding")
-    
-    return result
+    if user_data["user_type"] == "employer":
+        
+        company_data = {
+            "company_name": data.get("companyName", ""),
+            "description": data.get("description", ""),
+            "founded_year": data.get("foundedYear"),
+            "employee_count": data.get("companySize"),
+            "location": data.get("location"),
+            "industry": data.get("industry"),
+            "logo": data.get("logo")
+        }
+
+        result = company_functions.add_company(company_data)
+        company = result["data"]
+        result = auth_functions.onboard_user(user_data, data, company)
+
+        if not result:
+            raise HTTPException(status_code=401, detail="Could not complete onboarding")
+        
+        return result
+    else:
+        return {"message": "Onboarding completed successfully"}

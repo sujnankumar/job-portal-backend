@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, Request, Depends
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from datetime import datetime
 from typing import Optional
 import uuid
 from bson import ObjectId
+from app.functions import application_functions
 
 router = APIRouter()
 
@@ -15,6 +16,14 @@ def fix_objectid(doc):
         if isinstance(v, ObjectId):
             doc[k] = str(v)
     return doc
+
+def get_current_user(request: Request):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    print(request.headers)
+    user_data = verify_token(token)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="Invalid or missing token")
+    return user_data
 
 @router.post("/apply/{job_id}")
 async def apply_for_job(
@@ -82,3 +91,13 @@ async def apply_for_job(
         "parsed_data": parsed_data
     })
     return {"message": "Application submitted successfully", "application": fix_objectid(application)}
+
+@router.post("/delete_application/{application_id}")
+async def delete_application(application_id: str, user=Depends(get_current_user)):
+    print(application_id, user)
+    response  = application_functions.delete_application(application_id, user["user_id"])
+
+    if response["status"] == "success":
+        return {"message": "Application deleted successfully"}
+    else:
+        raise HTTPException(status_code=400, detail=response["message"])

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import auth, user, job,application, get_application, save_job, interview, resume, email,recommendation_routes, get_my_applications, active_application, profile, featured_jobs, employee
+from app.routes import auth, user, job,application, get_application, save_job, interview, resume, email,recommendation_routes, get_my_applications, active_application, profile, employee
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.functions import job_functions
@@ -42,7 +42,6 @@ app.include_router(interview.router, prefix="/api/interview", tags=["Interview"]
 app.include_router(email.router, prefix="/api/email", tags=["Email"])
 app.include_router(active_application.router, prefix="/api/aa", tags=["active_application"])
 app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
-app.include_router(featured_jobs.router, prefix="/api/featured-jobs", tags=["Featured Jobs"])
 app.include_router(employee.router, prefix="/api/emp", tags=["Employee"])
 
 

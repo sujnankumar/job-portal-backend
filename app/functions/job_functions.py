@@ -122,3 +122,12 @@ def add_company(company_data: dict, employer_id: str):
     company_data["employer_id"] = employer_id
     db.companies.insert_one(company_data)
     return {"msg": "Company added", "company_id": company_data["company_id"]}
+
+def get_popular_job_categories():
+    pipeline = [
+        {"$group": {"_id": "$job_category", "count": {"$sum": 1}}}, 
+        {"$sort": {"count": -1}}, 
+        {"$project": {"name": "$_id", "count": 1, "_id": 0}}
+    ]
+    return {"categories": list(db.jobs.aggregate(pipeline))}
+    
