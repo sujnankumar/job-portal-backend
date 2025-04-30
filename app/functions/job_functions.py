@@ -1,6 +1,7 @@
 from app.db import db
 import uuid
 from datetime import datetime, timedelta, timezone
+from bson import ObjectId
 
 def create_job(job_data: dict):
     job_data["job_id"] = str(uuid.uuid4())
@@ -131,3 +132,5 @@ def get_popular_job_categories():
     ]
     return {"categories": list(db.jobs.aggregate(pipeline))}
     
+def get_jobs_by_company(company_id: str):
+    return list(db.jobs.find({"company_id": company_id  }, {"_id": 0}))

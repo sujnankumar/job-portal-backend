@@ -1,25 +1,26 @@
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Response, Request
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from gridfs import GridFS
 from bson import ObjectId
+from app.functions import auth_functions
 
 gfs = GridFS(db)
 
 router = APIRouter()
 
+def get_current_user(request: Request):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    user_data = verify_token(token)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="Invalid or missing token")
+    return user_data
+
 @router.get("/company_details")
-async def get_company_details(authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
-    token = authorization.split(" ", 1)[1]
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    user_email = payload.get("email")
-    if not user_email:
-        raise HTTPException(status_code=400, detail="Could not retrieve user email from token")
-    user = db.users.find_one({"email": user_email}, {"_id": 0, "password": 0})
+async def get_company_details(request: Request):
+    user_data = get_current_user(request)
+    user = auth_functions.get_user_by_id(user_data.get("user_id"))
+    print("user :",user)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("user_type") != "employer":
