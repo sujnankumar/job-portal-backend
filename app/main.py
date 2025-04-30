@@ -20,7 +20,12 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://job-portal-frontend-n81l.onrender.com"
+        "https://100.20.92.101",
+        "https://44.225.181.72",
+        "https://44.227.217.144",
+        "http://100.20.92.101",
+        "http://44.225.181.72",
+        "http://44.227.217.144"
     ],
     allow_credentials=True,
     allow_methods=["*"],
