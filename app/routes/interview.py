@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, Request, Depends, Header
 from app.functions import interview_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
+from bson import ObjectId
+from app.routes.notification import notification_manager, serialize_notification
 
 router = APIRouter()
 
@@ -60,14 +62,43 @@ async def my_interviews(authorization: str = Header(None)):
     user_id, _ = get_current_user_id_and_type(authorization)
     return interview_functions.get_interviews_for_user(user_id)
 
-@router.get("/notifications")
-async def get_notifications(authorization: str = Header(None)):
+@router.put("/edit/{interview_id}")
+async def edit_interview_route(interview_id: str, request: Request, authorization: str = Header(None)):
     user_id, _ = get_current_user_id_and_type(authorization)
-    return interview_functions.get_notifications(user_id)
+    data = await request.json()
+    result = interview_functions.edit_interview(interview_id, user_id, data)
+    if result.get("error"):
+        raise HTTPException(status_code=result["status"], detail=result["error"])
+    return result
 
-@router.post("/notifications/mark_read/{notification_id}")
-async def mark_notification_read(notification_id: str, authorization: str = Header(None)):
-    user_id, _ = get_current_user_id_and_type(authorization)
-    if interview_functions.mark_notification_read(user_id, notification_id):
-        return {"msg": "Notification marked as read"}
-    raise HTTPException(status_code=404, detail="Notification not found")
+@router.get("/applicant")
+async def get_applicant_interviews(authorization: str = Header(None)):
+    user_id, user_type = get_current_user_id_and_type(authorization)
+    if user_type != "job_seeker":
+        raise HTTPException(status_code=403, detail="Only applicants can view their interviews.")
+    interviews = list(db.interviews.find({"candidate_id": user_id}))
+    for interview in interviews:
+        interview["id"] = str(interview["_id"])
+        interview.pop("_id", None)
+        # Optionally, add job title
+        job = db.jobs.find_one({"job_id": interview["job_id"]})
+        interview["job_title"] = job["title"] if job and "title" in job else interview["job_id"]
+    return interviews
+
+@router.get("/employer")
+async def get_employer_interviews(authorization: str = Header(None)):
+    user_id, user_type = get_current_user_id_and_type(authorization)
+    if user_type != "employer":
+        raise HTTPException(status_code=403, detail="Only employers can view their jobs' interviews.")
+    jobs = list(db.jobs.find({"employer_id": user_id}, {"_id": 0}))
+    for job in jobs:
+        job_id = job["job_id"]
+        interviews = list(db.interviews.find({"job_id": job_id}))
+        for interview in interviews:
+            interview["id"] = str(interview["_id"])
+            interview.pop("_id", None)
+            # Optionally, add applicant name
+            candidate = db.users.find_one({"user_id": interview["candidate_id"]})
+            interview["applicant_name"] = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}" if candidate else interview["candidate_id"]
+        job["interviews"] = interviews
+    return jobs

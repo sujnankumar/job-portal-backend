@@ -6,6 +6,7 @@ from typing import Optional
 import uuid
 from bson import ObjectId
 from app.functions import application_functions
+from app.routes.notification import notification_manager, serialize_notification
 
 router = APIRouter()
 
@@ -19,7 +20,6 @@ def fix_objectid(doc):
 
 def get_current_user(request: Request):
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    print(request.headers)
     user_data = verify_token(token)
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
@@ -90,14 +90,49 @@ async def apply_for_job(
         "upload_date": datetime.utcnow(),
         "parsed_data": parsed_data
     })
+
+    # --- Notify employer ---
+    job = db.jobs.find_one({"job_id": job_id})
+    if job and "employer_id" in job:
+        employer_id = job["employer_id"]
+        notification = {
+            "user_id": employer_id,
+            "type": "application",
+            "title": "New Application",
+            "description": f"{user_data.get('first_name', '')} {user_data.get('last_name', '')} applied for {job.get('title', 'your job')}",
+            "time": datetime.utcnow(),
+            "read": False,
+            "link": f"/employer/dashboard/applications/{job_id}"
+        }
+        db.notifications.insert_one(notification)
+        await notification_manager.send_notification(employer_id, serialize_notification(notification))
     return {"message": "Application submitted successfully", "application": fix_objectid(application)}
 
 @router.post("/delete_application/{application_id}")
 async def delete_application(application_id: str, user=Depends(get_current_user)):
-    print(application_id, user)
+    # Find the application and job to notify employer BEFORE deleting
+    application = db.applications.find_one({"_id": ObjectId(application_id)})
+    employer_id = None
+    job = None
+    if application:
+        job = db.jobs.find_one({"job_id": application["job_id"]})
+        if job and "employer_id" in job:
+            employer_id = job["employer_id"]
     response  = application_functions.delete_application(application_id, user["user_id"])
 
     if response["status"] == "success":
+        if employer_id:
+            notification = {
+                "user_id": employer_id,
+                "type": "application",
+                "title": "Application Withdrawn",
+                "description": f"{user.get('first_name', '')} {user.get('last_name', '')} withdrew their application for {job.get('title', 'your job') if job else ''}",
+                "time": datetime.utcnow(),
+                "read": False,
+                "link": f"/employer/dashboard/applications/{job['job_id']}" if job else ""
+            }
+            db.notifications.insert_one(notification)
+            await notification_manager.send_notification(employer_id, serialize_notification(notification))
         return {"message": "Application deleted successfully"}
     else:
         raise HTTPException(status_code=400, detail=response["message"])

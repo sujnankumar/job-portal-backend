@@ -4,6 +4,7 @@ from app.utils.jwt_handler import verify_token as decode_jwt
 from bson import ObjectId
 from datetime import datetime
 from typing import List
+import asyncio
 
 router = APIRouter()
 
@@ -74,6 +75,11 @@ async def websocket_notifications(websocket: WebSocket, token: str):
     await notification_manager.connect(user_id, websocket)
     try:
         while True:
-            await websocket.receive_text()  # keep connection alive
+            try:
+                # Wait for a message from the client, but don't close if idle
+                await asyncio.wait_for(websocket.receive_text(), timeout=60)
+            except asyncio.TimeoutError:
+                # Send a ping to keep the connection alive
+                await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
         notification_manager.disconnect(user_id)

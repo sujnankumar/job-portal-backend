@@ -20,7 +20,6 @@ def get_current_user(request: Request):
 async def get_company_details(request: Request):
     user_data = get_current_user(request)
     user = auth_functions.get_user_by_id(user_data.get("user_id"))
-    print("user :",user)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("user_type") != "employer":
