@@ -75,6 +75,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
             "expires_at": job.get("expires_at"),
             "employment_type": job.get("employment_type"),
             "salary": salary_str,
+            "employer_id": job.get("employer_id"),
         }
     
     application["personalInfo"] = {

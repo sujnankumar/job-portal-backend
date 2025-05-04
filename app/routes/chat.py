@@ -54,6 +54,7 @@ async def websocket_chat(websocket: WebSocket, recipient_id: str, token: str = N
     await manager.connect(user_id, websocket)
     try:
         while True:
+            print("messsage came")
             data = await websocket.receive_json()
             # Save message to DB
             message = {
