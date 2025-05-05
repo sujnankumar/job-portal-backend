@@ -2,12 +2,13 @@ from fastapi import APIRouter, Request, HTTPException, Header
 from app.functions import job_functions, auth_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
+from app.config.settings import BASE_URL
 
 router = APIRouter()
 
 def get_current_user(request: Request):
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    print(token)
+    
     user_data = verify_token(token)
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
@@ -159,7 +160,6 @@ async def get_featured_jobs():
         ]
         popular_jobs = list(db.applications.aggregate(application_pipeline))
         popular_job_ids = [job["_id"] for job in popular_jobs]
-
         if not popular_job_ids:
             return {"featured_jobs": []}
 
@@ -199,7 +199,9 @@ async def get_featured_jobs():
             cid = str(job.get("company_id"))
             company_details = company_map.get(cid, {})
             job["company_name"] = company_details.get("company_name", "")
-            job["logo"] = company_details.get("logo", "")
+            logo_id = company_details.get("logo", "")
+            job["logo"] = logo_id
+            job["logo_url"] = f"{BASE_URL}/api/company/logo/{logo_id}" if logo_id else None
 
         
         jobs_sorted = sorted(jobs, key=lambda job: popular_job_ids.index(job["job_id"]))

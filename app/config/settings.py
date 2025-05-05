@@ -7,6 +7,7 @@ MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("DB_NAME")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))

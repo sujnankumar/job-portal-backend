@@ -2,6 +2,7 @@ from app.db import db
 import uuid
 from datetime import datetime, timedelta, timezone
 from bson import ObjectId
+from app.config.settings import BASE_URL 
 
 def create_job(job_data: dict):
     job_data["job_id"] = str(uuid.uuid4())
@@ -24,9 +25,10 @@ def list_jobs():
     job_list = []
     for job in jobs:
         job["isNew"] = job["posted_at"].replace(tzinfo=timezone.utc) >= two_days_ago
-        company = db.users.find_one({"user_id": job["employer_id"]}, {"_id": 0, "company_name": 1})
-        print(job["employer_id"],company)
+        if "company_id" in job:
+            company = db.companies.find_one({"company_id": job["company_id"]}, {"_id": 0, "company_name": 1, "logo": 1})
         job["company"] = company["company_name"] if company else None
+        job["logo_url"] = f"{BASE_URL}/api/company/logo/{company['logo']}" if company and "logo" in company else None
         job_list.append(job)
     return job_list
 
@@ -116,7 +118,10 @@ def reactivate_expired_job(job_id: str, employer_id: str, validity_days: int = 1
     return {"msg": "Job reactivated", "job_id": job_id}
 
 def list_companies():
-    return list(db.companies.find({}, {"_id": 0}))
+    companies = db.companies.find({}, {"_id": 0})
+    for company in companies:
+        company["logo_url"] = f"{BASE_URL}/api/company/logo/{company['logo']}"
+    return list(companies)
 
 def add_company(company_data: dict, employer_id: str):
     company_data["company_id"] = str(uuid.uuid4())
@@ -133,4 +138,13 @@ def get_popular_job_categories():
     return {"categories": list(db.jobs.aggregate(pipeline))}
     
 def get_jobs_by_company(company_id: str):
-    return list(db.jobs.find({"company_id": company_id  }, {"_id": 0}))
+    company_jobs = db.jobs.find({"company_id": company_id}, {"_id": 0})
+    logo_id = db.companies.find_one({"company_id": company_id}, {"logo": 1}).get("logo")
+        
+    if not company_jobs:
+        return {"msg": "No jobs found for this company"}
+    for job in company_jobs:
+        job.pop("_id", None)
+        job["logo_url"] = f"{BASE_URL}/api/company/logo/{logo_id}"
+        
+    return list(company_jobs)

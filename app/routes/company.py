@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, Response
 from app.functions import company_functions, auth_functions
 from app.utils.jwt_handler import verify_token
+from gridfs import GridFS
+from bson import ObjectId
+from app.db import db
 
 router = APIRouter()
+
+gfs = GridFS(db)
 
 def get_current_user(request: Request):
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
@@ -29,3 +34,11 @@ async def get_company_by_id(company_id: str):
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     return company
+
+@router.get("/logo/{logo_id}")
+async def get_company_logo(logo_id: str):
+    try:
+        file = gfs.get(ObjectId(logo_id))
+        return Response(content=file.read(), media_type=file.content_type, headers={"Content-Disposition": f"inline; filename={file.filename}"})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Logo not found")
