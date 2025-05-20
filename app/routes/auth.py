@@ -31,7 +31,7 @@ async def login(request: Request):
     if not data.get("email") or not data.get("password"):
         raise HTTPException(status_code=400, detail="Email and password are required")
     
-    result = auth_functions.login_user(data["email"], data["password"])
+    result = auth_functions.login_user(data["email"], data["password"], data["remember_me"])
     
     if not result:
         raise HTTPException(status_code=401, detail="Invalid credentials")

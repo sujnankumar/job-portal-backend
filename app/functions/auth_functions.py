@@ -31,7 +31,7 @@ def register_user(user_data: dict):
 def is_email_registered(email: str):
     return db.users.find_one({"email": email}) is not None
 
-def login_user(email: str, password: str):
+def login_user(email: str, password: str, remember_me: bool = False):
     user = db.users.find_one({"email": email})
     if not user or not verify_password(password, user["password"]):
         return None
@@ -41,7 +41,7 @@ def login_user(email: str, password: str):
         "user_type": user["user_type"],
         "first_name": user["first_name"],
         "last_name": user["last_name"]
-    })
+    }, remember_me=remember_me)
     onboarding = user["onboarding"]
     return {"access_token": token, "token_type": "bearer", "onboarding": onboarding}
 
