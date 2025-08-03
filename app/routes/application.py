@@ -115,6 +115,8 @@ async def delete_application(application_id: str, user=Depends(get_current_user)
     employer_id = None
     job = None
     if application:
+        # Save the application to deleted_applications before deleting
+        db.deleted_applications.insert_one(application)
         job = db.jobs.find_one({"job_id": application["job_id"]})
         if job and "employer_id" in job:
             employer_id = job["employer_id"]
