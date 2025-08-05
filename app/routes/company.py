@@ -42,3 +42,14 @@ async def get_company_logo(logo_id: str):
         return Response(content=file.read(), media_type=file.content_type, headers={"Content-Disposition": f"inline; filename={file.filename}"})
     except Exception:
         raise HTTPException(status_code=404, detail="Logo not found")
+    
+@router.get("/logo/company/{company_id}")
+async def get_logo_by_company_id(company_id: str):
+    company = company_functions.get_company_by_id(company_id)
+    if not company or not company.get("logo"):
+        raise HTTPException(status_code=404, detail="Company or logo not found")
+    try:
+        file = gfs.get(ObjectId(company["logo"]))
+        return Response(content=file.read(), media_type=file.content_type, headers={"Content-Disposition": f"inline; filename={file.filename}"})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Logo not found")
