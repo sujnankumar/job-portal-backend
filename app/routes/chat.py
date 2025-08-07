@@ -1,11 +1,15 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header, Response
 from app.utils.jwt_handler import verify_token
 from app.db import db
+from gridfs import GridFS
+from bson import ObjectId
 from typing import Dict, List
 import uuid
 from datetime import datetime
 
 router = APIRouter()
+
+gfs = GridFS(db)
 
 # In-memory connection manager for demo (use Redis or DB pub/sub for production)
 class ConnectionManager:
@@ -114,3 +118,52 @@ async def get_chat_messages(recipient_id: str, authorization: str = Header(None)
         ]
     }, {"_id": 0}))
     return messages
+
+@router.get("/chat/profile-photo/{user_id}")
+async def get_user_profile_photo(user_id: str):
+    """
+    Get profile photo for a user (both job seekers and employers) for chat interface
+    """
+    try:
+        # First, get user info to determine their role and profile photo
+        user = db.users.find_one({"user_id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        profile_photo_id = None
+        
+        # Check user role and get appropriate profile photo
+        if user.get("user_type") == "employer":
+            # For employers, get their company logo as profile photo
+            company_id = user.get("company_id")
+            if company_id:
+                company = db.companies.find_one({"company_id": company_id})
+                if company and company.get("logo"):
+                    profile_photo_id = company.get("logo")
+        else:
+            # For job seekers, try different profile photo field names
+            profile_photo_id = user.get("profile_photo_id")
+    
+        # Debug logging
+        print(f"User {user_id}: type={user.get('user_type')}, profile_photo_id={profile_photo_id}")
+        print(f"User fields: {list(user.keys())}")
+        
+        # If we have a profile photo ID, fetch it from GridFS
+        if profile_photo_id:
+            try:
+                file = gfs.get(ObjectId(profile_photo_id))
+                return Response(
+                    content=file.read(), 
+                    media_type=file.content_type, 
+                    headers={"Content-Disposition": f"inline; filename={file.filename}"}
+                )
+            except Exception as e:
+                print(f"GridFS error for {profile_photo_id}: {e}")
+                pass
+        
+        # Return default profile photo for the user type
+        raise HTTPException(status_code=404, detail="Profile photo not found")
+            
+    except Exception as e:
+        print(f"Error in get_user_profile_photo: {e}")
+        raise HTTPException(status_code=404, detail="Profile photo not found")

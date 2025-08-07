@@ -110,3 +110,16 @@ async def get_profile_photo(authorization: str = Header(None)):
     file_id = user["profile_photo_id"]
     file = gfs.get(ObjectId(file_id))
     return Response(content=file.read(), media_type=file.content_type, headers={"Content-Disposition": f"inline; filename={file.filename}"})
+
+@router.get("/profile_photo/{user_id}")
+async def get_profile_photo_by_user_id(user_id: str):
+    user = db.users.find_one({"_id": ObjectId(user_id)})
+    if not user or not user.get("profile_photo_id"):
+        raise HTTPException(status_code=404, detail="Profile photo not found")
+    file_id = user["profile_photo_id"]
+    file = gfs.get(ObjectId(file_id))
+    return Response(
+        content=file.read(),
+        media_type=file.content_type,
+        headers={"Content-Disposition": f"inline; filename={file.filename}"}
+    )

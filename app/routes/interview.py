@@ -102,3 +102,21 @@ async def get_employer_interviews(authorization: str = Header(None)):
             interview["applicant_name"] = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}" if candidate else interview["candidate_id"]
         job["interviews"] = interviews
     return jobs
+
+
+@router.get("/details/{job_id}")
+async def get_interview_details(job_id: str, authorization: str = Header(None)):
+    user_id, user_type = get_current_user_id_and_type(authorization)
+    query = {"job_id": job_id}
+    if user_type == "job_seeker":
+        query["candidate_id"] = user_id
+    elif user_type == "employer":
+        query["hr_id"] = user_id
+    else:
+        raise HTTPException(status_code=403, detail="Unauthorized user type")
+    interview = db.interviews.find_one(query)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    interview["id"] = str(interview["_id"])
+    interview.pop("_id", None)
+    return interview

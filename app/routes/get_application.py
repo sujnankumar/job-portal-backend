@@ -36,7 +36,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
         raise HTTPException(status_code=400, detail="Invalid application ID format")
 
     application = db.applications.find_one({"_id": ObjectId(app_id)})
-    print(application)
+    # print(application)
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -56,7 +56,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
     if not user_data:
         user_data = {}
 
-    print(company)
+    # print(company)
     salary_str = ""
     if job.get("show_salary", False):
         salary_str = str(job.get("min_salary", 0)) + " - " + str(job.get("max_salary", 0))
@@ -137,7 +137,7 @@ async def get_applications_for_id(job_id: str = Path(...), user=Depends(get_curr
     # No need to check ObjectId validity for job_id since it's a UUID
 
     application = db.applications.find_one({"job_id": job_id, "user_id": user["user_id"]})
-    print(application)
+    # print(application)
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -157,7 +157,7 @@ async def get_applications_for_id(job_id: str = Path(...), user=Depends(get_curr
     if not user_data:
         user_data = {}
 
-    print(company)
+    # print(company)
     salary_str = ""
     if job.get("show_salary", False):
         salary_str = str(job.get("min_salary", 0)) + " - " + str(job.get("max_salary", 0))

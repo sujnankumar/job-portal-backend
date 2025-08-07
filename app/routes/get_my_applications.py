@@ -32,11 +32,18 @@ async def get_my_applications(user=Depends(get_current_user)):
             continue
         employer = db.users.find_one({"user_id": job.get("employer_id")})
         company = company_functions.get_company_by_id(job.get("company_id"))
+        
+        # Get company logo ID if available
+        company_logo_id = None
+        if company and company.get("logo"):
+            company_logo_id = company.get("logo")
+            
         enriched.append({
             "id": str(app["_id"]), 
             "jobTitle": job.get("title"),
             "company": company.get("company_name", "") if company else employer.get("company_name", ""),
-            "logo": job.get("logo", "/abstract-circuit-board.png"),
+            "companyId": job.get("company_id"),  # Add company ID for logo fetching
+            "logo": company_logo_id,  # Use company logo ID instead of job logo
             "location": job.get("location"),
             "appliedDate": app["applied_at"].strftime("%b %d, %Y") if app.get("applied_at") else None,
             "status": app.get("status", "Under Review"),
@@ -75,11 +82,20 @@ async def get_active_applications(user=Depends(get_current_user)):
         if not job:
             continue
         employer = db.users.find_one({"user_id": job.get("employer_id")})
-        company_name = employer["company_name"] if employer and "company_name" in employer else None
+        company = company_functions.get_company_by_id(job.get("company_id"))
+        
+        # Get company logo ID if available
+        company_logo_id = None
+        if company and company.get("logo"):
+            company_logo_id = company.get("logo")
+            
+        company_name = company.get("company_name", "") if company else (employer.get("company_name", "") if employer else "")
+        
         enriched.append({
             "jobTitle": job.get("title"),
             "company": company_name,
-            "logo": job.get("logo", "/abstract-circuit-board.png"),
+            "companyId": job.get("company_id"),  # Add company ID for logo fetching
+            "logo": company_logo_id,  # Use company logo ID instead of job logo
             "location": job.get("location"),
             "appliedDate": app["applied_at"].strftime("%b %d, %Y") if app.get("applied_at") else None,
             "status": app.get("status", "Under Review"),

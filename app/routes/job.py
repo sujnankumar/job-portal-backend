@@ -214,3 +214,12 @@ async def get_featured_jobs():
 @router.get("/company/{company_id}")
 def get_jobs_by_company_route(company_id: str):
     return job_functions.get_jobs_by_company(company_id)
+
+@router.get("/jobs/by_company/{company_id}")
+async def get_jobs_by_company(company_id: str):
+    # Only return active jobs
+    jobs = list(db.jobs.find({
+        "company_id": company_id, 
+        "status": "active"
+    }, {"_id": 0}))
+    return {"jobs": jobs}

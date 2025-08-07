@@ -24,6 +24,19 @@ def get_company_by_id(company_id: str):
         return company
 
 def get_all_companies():
-    companies = list(db.companies.find({}, {"_id": 0, "company_id": 1, "company_name": 1}))
+    companies = list(db.companies.find({}, {
+        "_id": 0, 
+        "company_id": 1, 
+        "company_name": 1,
+        "company_email": 1,
+        "company_phone": 1,
+        "description": 1,
+        "founded_year": 1,
+        "employee_count": 1,
+        "location": 1,
+        "industry": 1,
+        "logo": 1,
+        "created_at": 1
+    }))
     unique_companies = {company["company_id"]: company for company in companies}.values()
     return list(unique_companies)

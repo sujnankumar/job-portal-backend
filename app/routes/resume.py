@@ -5,7 +5,7 @@ from app.utils.jwt_handler import verify_token
 router = APIRouter()
 
 def get_current_user_id(authorization: str = Header(None)):
-    print(authorization)
+    # print(authorization)
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
     token = authorization.split(" ", 1)[1]

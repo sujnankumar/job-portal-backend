@@ -181,7 +181,7 @@ async def get_job_applications(job_id: str, authorization: str = Header(None)):
     enriched_apps = []
     for app in applications:
         candidate = db.users.find_one({"user_id": app["user_id"]}, {"_id": 0, "user_id": 1, "first_name": 1, "last_name": 1, "email": 1, "phone": 1, "location": 1, "avatar": 1})
-        print("candidate :",candidate)
+        # print("candidate :",candidate)
         if not candidate:
             continue
         enriched_apps.append({
@@ -202,7 +202,7 @@ async def get_job_applications(job_id: str, authorization: str = Header(None)):
             "interviewDate": app.get("interview_date", None),
             "interviewTime": app.get("interview_time", None),
         })
-        print(enriched_apps)
+        # print(enriched_apps)
     return {
         "jobDetails": job_details,
         "applications": enriched_apps
