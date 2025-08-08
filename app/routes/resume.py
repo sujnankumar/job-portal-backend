@@ -76,3 +76,24 @@ async def get_profile_resume(user_id: str = Depends(get_current_user_id)):
     # Expose headers for CORS
     response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Type"
     return response
+
+@router.get("/get_resume_by_file_id/{file_id}")
+async def get_resume_by_file_id(file_id: str, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    token = authorization.split(" ", 1)[1]
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    # Only allow access to own resume or if employer/admin
+    user_type = payload.get("user_type")
+    user_id = payload.get("user_id")
+    resume = resume_functions.get_resume_by_file_id(file_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    if resume["user_id"] != user_id and user_type not in ["employer", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    blob_url = resume_functions.get_blob_url_by_file_id(file_id)
+    if not blob_url:
+        raise HTTPException(status_code=404, detail="Blob file not found")
+    return {"blob_url": blob_url}

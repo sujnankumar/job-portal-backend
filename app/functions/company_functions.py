@@ -3,6 +3,7 @@ from app.db import db
 from app.utils.jwt_handler import create_access_token
 from datetime import datetime, timezone
 import uuid
+from app.utils.timezone_utils import get_ist_now
 
 def hash_password(password: str):
     return bcrypt.hash(password)
@@ -12,7 +13,7 @@ def verify_password(plain_password, hashed_password):
 
 def add_company(company_data: dict):
     company_data["company_id"] = str(uuid.uuid4())
-    company_data["created_at"] = datetime.now(timezone.utc).isoformat()
+    company_data["created_at"] = get_ist_now().isoformat()
     db.companies.insert_one(company_data)
     company_data.pop("_id", None)  # Remove MongoDB's internal _id field
     return {"msg": "Company added", "data": company_data}
@@ -31,6 +32,8 @@ def get_all_companies():
         "company_email": 1,
         "company_phone": 1,
         "description": 1,
+        "culture": 1,
+        "benefits": 1,
         "founded_year": 1,
         "employee_count": 1,
         "location": 1,
@@ -40,3 +43,16 @@ def get_all_companies():
     }))
     unique_companies = {company["company_id"]: company for company in companies}.values()
     return list(unique_companies)
+
+def update_company_by_id(company_id: str, update_data: dict):
+    result = db.companies.update_one(
+        {"company_id": company_id},
+        {"$set": update_data}
+    )
+    if result.modified_count == 0:
+        return None
+    updated_company = db.companies.find_one({"company_id": company_id})
+    if updated_company:
+        updated_company.pop("_id", None)
+        return {"msg": "Company updated", "data": updated_company}
+    return None

@@ -3,6 +3,7 @@ from datetime import datetime
 from bson import ObjectId
 from app.utils import zoom_utils
 from app.routes.notification import notification_manager, serialize_notification
+from app.utils.timezone_utils import get_ist_now
 
 def schedule_interview(hr_id: str, candidate_id: str, job_id: str, scheduled_time: str, zoom_link: str = None, details: dict = None):
     interview_data = {
@@ -11,7 +12,7 @@ def schedule_interview(hr_id: str, candidate_id: str, job_id: str, scheduled_tim
         "job_id": job_id,
         "scheduled_time": scheduled_time,  # ISO string
         "details": details or {},
-        "created_at": datetime.utcnow(),
+        "created_at": get_ist_now(),
         "status": "scheduled"
     }
     # Handle Zoom meeting creation if needed
@@ -46,7 +47,7 @@ def schedule_interview(hr_id: str, candidate_id: str, job_id: str, scheduled_tim
         "type": "interview",
         "title": "Interview Scheduled",
         "description": f"Interview with {candidate_name} for {job_title} scheduled at {time_str}.",
-        "time": datetime.utcnow(),
+        "time": get_ist_now(),
         "read": False,
         "link": f"/employer/dashboard/applications/{job_id}"
     }
@@ -56,7 +57,7 @@ def schedule_interview(hr_id: str, candidate_id: str, job_id: str, scheduled_tim
         "type": "interview",
         "title": "Interview Scheduled",
         "description": f"Interview with {employer_name} for {job_title} scheduled at {time_str}.",
-        "time": datetime.utcnow(),
+        "time": get_ist_now(),
         "read": False,
         "link": f"/applications"
     }
@@ -97,7 +98,7 @@ def edit_interview(interview_id: str, user_id: str, data: dict):
         "type": "interview",
         "title": "Interview Rescheduled",
         "description": f"Interview with {candidate_name} for {job_title} has been rescheduled to {time_str}.",
-        "time": datetime.utcnow(),
+        "time": get_ist_now(),
         "read": False,
         "link": f"/employer/dashboard/applications/{updated_interview['job_id']}"
     }
@@ -106,7 +107,7 @@ def edit_interview(interview_id: str, user_id: str, data: dict):
         "type": "interview",
         "title": "Interview Rescheduled",
         "description": f"Interview with {employer_name} for {job_title} has been rescheduled to {time_str}.",
-        "time": datetime.utcnow(),
+        "time": get_ist_now(),
         "read": False,
         "link": f"/applications"
     }

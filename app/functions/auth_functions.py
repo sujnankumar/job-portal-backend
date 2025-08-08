@@ -3,6 +3,7 @@ from app.db import db
 from app.utils.jwt_handler import create_access_token
 from datetime import datetime, timezone
 import uuid
+from app.utils.timezone_utils import get_ist_now
 
 def hash_password(password: str):
     return bcrypt.hash(password)
@@ -12,16 +13,16 @@ def verify_password(plain_password, hashed_password):
 
 def register_user(user_data: dict):
     user_data["password"] = hash_password(user_data["password"])
-    user_data["register_time"] = datetime.now(timezone.utc)
+    user_data["register_time"] = get_ist_now()
     user_data["user_id"] = str(uuid.uuid4())
     user_data["onboarding"] = {
         "isComplete": False,
-        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "startedAt": get_ist_now().isoformat(),
         "formData": {},
         "validationStatus": {},
         "validationMessages": {},
         "lastStep": 0,
-        "lastUpdated": datetime.now(timezone.utc).isoformat()
+        "lastUpdated": get_ist_now().isoformat()
     }
     db.users.insert_one(user_data)
     user_data.pop("_id", None)
@@ -62,7 +63,7 @@ def onboard_user(user_data: dict, onboarding_data: dict, company_data: dict):
         "validationStatus": {},
         "validationMessages": {},
         "lastStep": 0,
-        "lastUpdated": datetime.now(timezone.utc).isoformat()
+        "lastUpdated": get_ist_now().isoformat()
     }
     
     update_fields = {

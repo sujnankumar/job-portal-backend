@@ -102,6 +102,8 @@ async def onboarding(request: Request):
             "company_email": data.get("companyEmail", ""),
             "company_phone": data.get("companyPhone", ""),
             "description": data.get("description", ""),
+            "culture": data.get("culture", ""),
+            "benefits": data.get("benefits", ""),
             "founded_year": data.get("foundedYear"),
             "employee_count": data.get("companySize"),
             "location": data.get("location"),

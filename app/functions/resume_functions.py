@@ -7,6 +7,7 @@ import docx
 import spacy
 import re
 from io import BytesIO
+from app.utils.timezone_utils import get_ist_now
 
 gfs = GridFS(db)
 nlp = spacy.load("en_core_web_sm")
@@ -83,14 +84,14 @@ def upload_resume(user_id: str, file, filename: str, content_type: str):
     if old:
         gfs.delete(old["file_id"])
         db.resumes.delete_one({"user_id": user_id})
-    file_id = gfs.put(file, filename=filename, content_type=content_type, upload_date=datetime.utcnow())
+    file_id = gfs.put(file, filename=filename, content_type=content_type, upload_date=get_ist_now())
     parsed_data = parse_resume(file, content_type)
     db.resumes.insert_one({
         "user_id": user_id,
         "file_id": file_id,
         "filename": filename,
         "content_type": content_type,
-        "upload_date": datetime.utcnow(),
+        "upload_date": get_ist_now(),
         "parsed_data": parsed_data
     })
     return {"msg": "Resume uploaded", "file_id": str(file_id)}
@@ -117,8 +118,11 @@ def list_resumes():
     return list(db.resumes.find({}, {"_id": 0}))
 
 def get_resume_by_file_id(file_id: str):
-    # print(file_id)
+    print(file_id)
     resume = db.resumes.find_one({"file_id": ObjectId(file_id)})
+    if not resume:
+        resume = db.temp_resume.find_one({"file_id": ObjectId(file_id)})
+    print("The final retrieved resume : ",resume)
     if not resume:
         return None, None
     file = gfs.get(resume.get("file_id")).read()

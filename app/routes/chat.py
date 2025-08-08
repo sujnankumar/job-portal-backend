@@ -5,7 +5,7 @@ from gridfs import GridFS
 from bson import ObjectId
 from typing import Dict, List
 import uuid
-from datetime import datetime
+from app.utils.timezone_utils import get_ist_now
 
 router = APIRouter()
 
@@ -66,7 +66,7 @@ async def websocket_chat(websocket: WebSocket, recipient_id: str, token: str = N
                 "sender_id": user_id,
                 "recipient_id": recipient_id,
                 "text": data["text"],
-                "time": datetime.utcnow().isoformat()
+                "time": get_ist_now().isoformat()
             }
             db.chats.insert_one(message)
             # Remove _id (ObjectId) before sending to client
