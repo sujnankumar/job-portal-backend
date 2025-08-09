@@ -107,16 +107,16 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
             "date": application.get("interview_date", None),
             "description": "Interview scheduled"
         }
-    elif application.get("status") == "selected":
+    elif application.get("status") == "accepted":
         status_timeline = {
             "status": "selected",
-            "date": application.get("selection_date", None),
+            "date": application.get("status_updated_at", None),
             "description": "Application selected"
         }
     elif application.get("status") == "rejected":
         status_timeline = {
             "status": "rejected",
-            "date": application.get("rejection_date", None),
+            "date": application.get("status_updated_at", None),
             "description": "Application rejected"
         }
     else:
@@ -202,22 +202,22 @@ async def get_applications_for_id(job_id: str = Path(...), user=Depends(get_curr
         application["job"]["_id"] = str(application["job"]["_id"])
 
     status_timeline = {}
-    if application.get("status") == "Scheduled":
+    if application.get("status") == "interview":
         status_timeline = {
             "status": "schdeduled",
             "date": application.get("interview_date", None),
             "description": "Interview scheduled"
         }
-    elif application.get("status") == "Selected":
+    elif application.get("status") == "accepted":
         status_timeline = {
             "status": "selected",
-            "date": application.get("selection_date", None),
+            "date": application.get("status_updated_at", None),
             "description": "Application selected"
         }
-    elif application.get("status") == "Rejected":
+    elif application.get("status") == "rejected":
         status_timeline = {
             "status": "rejected",
-            "date": application.get("rejection_date", None),
+            "date": application.get("status_updated_at", None),
             "description": "Application rejected"
         }
     else:
