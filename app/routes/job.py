@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, Header
 from app.functions import job_functions, auth_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
+from app.utils.timezone_utils import get_ist_now
 from app.config.settings import BASE_URL
 
 router = APIRouter()
@@ -131,6 +132,15 @@ async def get_job_with_saved_status(job_id: str, request: Request):
     job = db.jobs.find_one({"job_id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    # Auto-mark expired if needed (single fetch path)
+    try:
+        now = get_ist_now()
+        expires_at = job.get("expires_at")
+        if expires_at and job.get("status") == "active" and expires_at < now:
+            db.jobs.update_one({"job_id": job_id}, {"$set": {"status": "expired"}})
+            job["status"] = "expired"
+    except Exception:
+        pass
     company = db.companies.find_one({"employer_id": job.get("employer_id")}, {"_id": 0})
     if company:
         job["company_details"] = company

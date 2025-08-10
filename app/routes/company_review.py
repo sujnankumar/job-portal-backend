@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from datetime import datetime
-from app.utils.timezone_utils import get_ist_now
+from datetime import datetime, timezone
+from app.utils.timezone_utils import get_ist_now, utc_to_ist
 from typing import Optional
 from pydantic import BaseModel, Field
 from app.routes.user import get_current_user
@@ -33,17 +33,20 @@ async def write_review(review: Review, current_user: dict = Depends(get_current_
         # Otherwise update the existing rating-only document
         db.company_reviews.update_one(
             {"_id": existing_review["_id"]},
-            {"$set": {"review_text": review.review_text, "rating": review.rating, "updated_at": get_ist_now()},
+            {"$set": {"review_text": review.review_text, "rating": review.rating, "updated_at": datetime.now(timezone.utc)},
              "$inc": {"editcount": 1}}
         )
         return {"message": "Review submitted successfully", "editcount": existing_review.get("editcount",0)+1}
 
+    # Store as UTC (timezone-aware)
+    created_utc = datetime.now(timezone.utc)
     review_doc = {
         "user_id": current_user["user_id"],
         "company_id": review.company_id,
         "rating": review.rating,
         "review_text": review.review_text,
-    "created_at": get_ist_now(),
+        # Persist UTC; we'll convert to IST on serialization
+        "created_at": created_utc,
         "editcount": 0
     }
     db.company_reviews.insert_one(review_doc)
@@ -94,7 +97,8 @@ async def edit_review(review: Review, current_user: dict = Depends(get_current_u
             "$set": {
                 "rating": review.rating,
                 "review_text": review.review_text,
-                "updated_at": get_ist_now()
+                # Store UTC
+                "updated_at": datetime.now(timezone.utc)
             },
             "$inc": {"editcount": 1}
         }
@@ -111,7 +115,7 @@ async def get_company_reviews(company_id: str):
     """Return all reviews (including ratings) for a company with basic user info (name/email).
     Only include entries that have a non-empty review_text for 'reviews' list; ratings-only entries can be sent too if desired."""
     cursor = db.company_reviews.find({"company_id": company_id})
-    reviews = []
+    reviews = []  # all rating documents (with or without textual review)
     for r in cursor:
         user = db.users.find_one({"user_id": r.get("user_id")}) or db.users.find_one({"_id": r.get("user_id")})
         print(r)
@@ -119,18 +123,35 @@ async def get_company_reviews(company_id: str):
         # Normalize ids to strings
         r["user_id"] = str(r.get("user_id"))
         r["company_id"] = str(r.get("company_id"))
+        # Convert stored (likely UTC naive or UTC aware) to IST for frontend display consistency
         if r.get("created_at"):
             try:
-                r["created_at"] = r["created_at"].isoformat()
+                ca = r["created_at"]
+                if ca.tzinfo is None:
+                    ca = ca.replace(tzinfo=timezone.utc)
+                r["created_at"] = utc_to_ist(ca).isoformat()
             except Exception:
                 pass
         if r.get("updated_at"):
             try:
-                r["updated_at"] = r["updated_at"].isoformat()
+                ua = r["updated_at"]
+                if ua.tzinfo is None:
+                    ua = ua.replace(tzinfo=timezone.utc)
+                r["updated_at"] = utc_to_ist(ua).isoformat()
             except Exception:
                 pass
         r["user_name"] = user.get("first_name")+" "+user.get("last_name") if user else "Anonymous"
         reviews.append(r)
     # Separate those with actual textual reviews
     textual_reviews = [rv for rv in reviews if rv.get("review_text")]  # non-empty string
-    return {"company_id": company_id, "count": len(textual_reviews), "reviews": textual_reviews}
+    # Aggregate rating stats across all reviews (including rating-only entries)
+    ratings = [rv.get("rating") for rv in reviews if isinstance(rv.get("rating"), (int, float))]
+    total_raters = len(ratings)
+    average_rating = round(sum(ratings) / total_raters, 2) if total_raters else 0
+    return {
+        "company_id": company_id,
+        "count": len(textual_reviews),  # textual review count
+        "reviews": textual_reviews,
+        "average_rating": average_rating,
+        "total_raters": total_raters
+    }
