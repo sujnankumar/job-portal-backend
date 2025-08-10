@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request, Header
+from fastapi import APIRouter, HTTPException, Request, Header, BackgroundTasks
 from app.db import db
 from app.utils.jwt_handler import verify_token
 from app.routes.notification import notification_manager, serialize_notification
 from app.utils.timezone_utils import get_ist_now
 from bson import ObjectId
 import asyncio
+from app.functions.notification_function import create_and_send_notification  # adjust path
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ def create_notification(user_id: str, title: str, message: str, notification_typ
     return notification
 
 @router.post("/accept/{application_id}")
-async def accept_application(application_id: str, request: Request, authorization: str = Header(None)):
+async def accept_application(application_id: str, request: Request, background_tasks: BackgroundTasks, authorization: str = Header(None)):
     """Accept an application - only employers can do this"""
     user_id, user_type = get_current_user_id_and_type(authorization)
     
@@ -83,6 +84,7 @@ async def accept_application(application_id: str, request: Request, authorizatio
         # Get applicant details
         applicant = db.users.find_one({"user_id": application["user_id"]})
         applicant_name = f"{applicant.get('first_name', '')} {applicant.get('last_name', '')}" if applicant else "Applicant"
+        applicant_email = applicant.get("email") if applicant else None
         
         # Create notification for the job seeker
         notification_title = "Application Accepted! 🎉"
@@ -90,12 +92,23 @@ async def accept_application(application_id: str, request: Request, authorizatio
         if feedback_message:
             notification_message += f" Message from employer: {feedback_message}"
         
-        create_notification(
+        await create_and_send_notification(
             user_id=application["user_id"],
             title=notification_title,
             message=notification_message,
-            notification_type="application_accepted"
+            background_tasks=background_tasks
         )
+        
+        # Send email to applicant
+        if applicant_email:
+            subject = f"Your application for {job['title']} was accepted!"
+            html_body = f"""
+            <h3>Hi {applicant_name},</h3>
+            <p>We’re excited to inform you that your application for <b>{job['title']}</b> at <b>{job.get('company_name', 'the company')}</b> has been accepted!</p>
+            <p>{feedback_message}</p>
+            <p>Best of luck for the next steps.</p>
+            """
+            background_tasks.add_task(send_email, applicant_email, subject, notification_message, html_body)
         
         return {
             "success": True,
@@ -111,8 +124,9 @@ async def accept_application(application_id: str, request: Request, authorizatio
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+
 @router.post("/reject/{application_id}")
-async def reject_application(application_id: str, request: Request, authorization: str = Header(None)):
+async def reject_application(application_id: str, request: Request, background_tasks: BackgroundTasks, authorization: str = Header(None)):
     """Reject an application - only employers can do this"""
     user_id, user_type = get_current_user_id_and_type(authorization)
     
@@ -158,19 +172,33 @@ async def reject_application(application_id: str, request: Request, authorizatio
         # Get applicant details
         applicant = db.users.find_one({"user_id": application["user_id"]})
         applicant_name = f"{applicant.get('first_name', '')} {applicant.get('last_name', '')}" if applicant else "Applicant"
+        applicant_email = applicant.get("email") if applicant else None
         
-        # Create notification for the job seeker
+        # Create in-app notification
         notification_title = "Application Update"
         notification_message = f"Thank you for your interest in '{job['title']}' at {job.get('company_name', 'the company')}. Unfortunately, we have decided to move forward with other candidates."
         if feedback_message:
             notification_message += f" Feedback: {feedback_message}"
         
-        create_notification(
+        await create_and_send_notification(
             user_id=application["user_id"],
             title=notification_title,
             message=notification_message,
-            notification_type="application_rejected"
+            background_tasks=background_tasks
         )
+        
+        # Send rejection email
+        if applicant_email:
+            subject = f"Update on your application for {job['title']}"
+            html_body = f"""
+            <h3>Hi {applicant_name},</h3>
+            <p>Thank you for your interest in <b>{job['title']}</b> at <b>{job.get('company_name', 'the company')}</b>.</p>
+            <p>After careful consideration, we regret to inform you that we will not be moving forward with your application at this time.</p>
+            {"<p><b>Reason:</b> " + reason + "</p>" if reason else ""}
+            {"<p><b>Feedback:</b> " + feedback_message + "</p>" if feedback_message else ""}
+            <p>We truly appreciate the time and effort you put into your application and wish you all the best in your job search.</p>
+            """
+            background_tasks.add_task(send_email, applicant_email, subject, notification_message, html_body)
         
         return {
             "success": True,
@@ -185,6 +213,7 @@ async def reject_application(application_id: str, request: Request, authorizatio
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
 
 @router.get("/status/{application_id}")
 async def get_application_status(application_id: str, authorization: str = Header(None)):

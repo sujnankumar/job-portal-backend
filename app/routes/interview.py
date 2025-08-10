@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Request, Depends, Header
+from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks
 from app.functions import interview_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from bson import ObjectId
 from app.routes.notification import notification_manager, serialize_notification
+from app.functions.notification_function import create_and_send_notification
 
 router = APIRouter()
 
@@ -16,32 +17,84 @@ def get_current_user_id_and_type(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return payload["user_id"], payload["user_type"]
 
+# @router.post("/schedule")
+# async def schedule_interview(request: Request, authorization: str = Header(None)):
+#     user_id, user_type = get_current_user_id_and_type(authorization)
+#     if user_type != "employer":
+#         raise HTTPException(status_code=403, detail="Only HRs can schedule interviews")
+#     data = await request.json()
+#     required = ["candidate_id", "job_id", "date", "startTime", "duration", "interviewType"]
+#     for field in required:
+#         if not data.get(field):
+#             raise HTTPException(status_code=400, detail=f"{field} is required")
+#     # Combine date and startTime into scheduled_time (ISO format)
+#     from datetime import datetime
+#     try:
+#         scheduled_time = datetime.strptime(f"{data['date']} {data['startTime']}", "%Y-%m-%d %H:%M").isoformat()
+#     except Exception:
+#         raise HTTPException(status_code=400, detail="Invalid date or startTime format")
+#     # Only require zoom_link if interviewType is video
+#     zoom_link = data.get("zoomLink") if data.get("interviewType") == "video" else None
+#     if data.get("interviewType") == "video" and not zoom_link:
+#         raise HTTPException(status_code=400, detail="zoomLink is required for video interviews")
+#     details = {
+#         "interviewType": data.get("interviewType"),
+#         "interviewers": data.get("interviewers"),
+#         "notes": data.get("notes"),
+#         "duration": data.get("duration")
+#     }
+#     result = interview_functions.schedule_interview(
+#         hr_id=user_id,
+#         candidate_id=data["candidate_id"],
+#         job_id=data["job_id"],
+#         scheduled_time=scheduled_time,
+#         zoom_link=zoom_link,
+#         details=details
+#     )
+#     # Update application status to 'interview'
+#     db.applications.update_one(
+#         {"job_id": data["job_id"], "user_id": data["candidate_id"]},
+#         {"$set": {"status": "interview", "interview_date": data["date"], "interview_time": data["startTime"]}}
+#     )
+#     return result
 @router.post("/schedule")
-async def schedule_interview(request: Request, authorization: str = Header(None)):
+async def schedule_interview(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None)
+):
     user_id, user_type = get_current_user_id_and_type(authorization)
     if user_type != "employer":
         raise HTTPException(status_code=403, detail="Only HRs can schedule interviews")
+
     data = await request.json()
     required = ["candidate_id", "job_id", "date", "startTime", "duration", "interviewType"]
     for field in required:
         if not data.get(field):
             raise HTTPException(status_code=400, detail=f"{field} is required")
-    # Combine date and startTime into scheduled_time (ISO format)
+
+    # Combine date and startTime into scheduled_time
     from datetime import datetime
     try:
-        scheduled_time = datetime.strptime(f"{data['date']} {data['startTime']}", "%Y-%m-%d %H:%M").isoformat()
+        scheduled_time = datetime.strptime(
+            f"{data['date']} {data['startTime']}", "%Y-%m-%d %H:%M"
+        ).isoformat()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid date or startTime format")
-    # Only require zoom_link if interviewType is video
+
+    # Zoom link requirement for video interviews
     zoom_link = data.get("zoomLink") if data.get("interviewType") == "video" else None
     if data.get("interviewType") == "video" and not zoom_link:
         raise HTTPException(status_code=400, detail="zoomLink is required for video interviews")
+
     details = {
         "interviewType": data.get("interviewType"),
         "interviewers": data.get("interviewers"),
         "notes": data.get("notes"),
         "duration": data.get("duration")
     }
+
+    # Schedule interview in DB
     result = interview_functions.schedule_interview(
         hr_id=user_id,
         candidate_id=data["candidate_id"],
@@ -50,12 +103,38 @@ async def schedule_interview(request: Request, authorization: str = Header(None)
         zoom_link=zoom_link,
         details=details
     )
-    # Update application status to 'interview'
+
+    # Update application status
     db.applications.update_one(
         {"job_id": data["job_id"], "user_id": data["candidate_id"]},
-        {"$set": {"status": "interview", "interview_date": data["date"], "interview_time": data["startTime"]}}
+        {"$set": {
+            "status": "interview",
+            "interview_date": data["date"],
+            "interview_time": data["startTime"]
+        }}
     )
+
+    # Get job details for notification
+    job = db.jobs.find_one({"job_id": data["job_id"]})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_title = job.get("title", "the position")
+    company_name = job.get("company_name", "our company")
+
+    # Send notification to candidate
+    await create_and_send_notification(
+        user_id=data["candidate_id"],
+        title="Interview Scheduled",
+        message=(
+            f"Your interview for {job_title} at {company_name} is scheduled "
+            f"on {data['date']} at {data['startTime']}."
+        ),
+        background_tasks=background_tasks
+    )
+
     return result
+
 
 @router.get("/my_interviews")
 async def my_interviews(authorization: str = Header(None)):

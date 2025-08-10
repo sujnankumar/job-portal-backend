@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, BackgroundTasks
 from app.db import db
 from app.utils.jwt_handler import verify_token as decode_jwt
 from bson import ObjectId
 from datetime import datetime
 from typing import List
 import asyncio
+from app.routes.user import get_current_user
+from pydantic import BaseModel
+from app.utils.email_utils import send_email
 
 router = APIRouter()
+
+# class NotificationRequest(BaseModel):
+#     user_id: str
+#     title: str
+#     message: str
+#     token: str
 
 # Helper to serialize MongoDB notification
 def serialize_notification(notification):
@@ -83,3 +92,37 @@ async def websocket_notifications(websocket: WebSocket, token: str):
                 await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
         notification_manager.disconnect(user_id)
+
+# @router.post("/send-notification")
+# async def send_notification(request: NotificationRequest, background_tasks: BackgroundTasks):
+#     # Verify the sender is employer
+#     current_user = get_current_user(request.token)
+#     if current_user.get("user_type") != "employer":
+#         raise HTTPException(status_code=403, detail="Only employers can send notifications")
+
+#     # Find the recipient
+#     user = db.users.find_one({"user_id": request.user_id})
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+
+#     # Create notification
+#     notification_data = {
+#         "user_id": request.user_id,
+#         "title": request.title,
+#         "message": request.message,
+#         "read": False,
+#         "time": datetime.utcnow()
+#     }
+#     result = db.notifications.insert_one(notification_data)
+#     notification_data["id"] = str(result.inserted_id)
+
+#     # Send real-time notification
+#     await notification_manager.send_notification(request.user_id, serialize_notification(notification_data))
+
+#     # Send email in background
+#     if user.get("email"):
+#         subject = f"New Notification: {request.title}"
+#         html_body = f"<h3>{request.title}</h3><p>{request.message}</p>"
+#         background_tasks.add_task(send_email, user["email"], subject, request.message, html_body)
+
+#     return {"detail": "Notification sent and email scheduled"}
