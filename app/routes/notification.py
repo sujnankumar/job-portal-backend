@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSoc
 from app.db import db
 from app.utils.jwt_handler import verify_token as decode_jwt
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 import asyncio
 from app.routes.user import get_current_user
@@ -22,7 +22,22 @@ def serialize_notification(notification):
     notification["id"] = str(notification["_id"])
     del notification["_id"]
     if "time" in notification and notification["time"]:
-        notification["time"] = notification["time"].isoformat() if isinstance(notification["time"], datetime) else notification["time"]
+        t = notification["time"]
+        if isinstance(t, datetime):
+            # Assume naive datetimes are UTC
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            # Normalize to UTC and output RFC3339 with Z
+            t = t.astimezone(timezone.utc)
+            notification["time"] = t.isoformat().replace("+00:00", "Z")
+        elif isinstance(t, str):
+            # If string lacks timezone info, treat as UTC and append Z
+            if not (t.endswith("Z") or "+" in t or t.rfind("-") > 9):
+                notification["time"] = t + "Z"
+            else:
+                notification["time"] = t
+        else:
+            notification["time"] = None
     else:
         notification["time"] = None
     return notification

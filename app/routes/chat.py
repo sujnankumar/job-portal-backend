@@ -66,7 +66,8 @@ async def websocket_chat(websocket: WebSocket, recipient_id: str, token: str = N
                 "sender_id": user_id,
                 "recipient_id": recipient_id,
                 "text": data["text"],
-                "time": get_ist_now().isoformat()
+                "time": get_ist_now().isoformat(),
+                "read": False  # unread for recipient initially
             }
             db.chats.insert_one(message)
             # Remove _id (ObjectId) before sending to client
@@ -91,16 +92,55 @@ async def get_chat_recipients(authorization: str = Header(None)):
         {"$group": {"_id": "$other"}}
     ]
     partners = [doc["_id"] for doc in db.chats.aggregate(pipeline)]
-    users = list(db.users.find({"user_id": {"$in": partners}}, {"user_id": 1, "first_name": 1, "last_name": 1, "avatar": 1}))
+    users = list(db.users.find({"user_id": {"$in": partners}}, {"user_id": 1, "first_name": 1, "last_name": 1, "avatar": 1, "user_type": 1, "company_id": 1}))
+
+    # Batch load companies for employer users to avoid N+1 queries
+    employer_company_ids = {u.get("company_id") for u in users if u.get("user_type") == "employer" and u.get("company_id")}
+    companies_by_id = {}
+    if employer_company_ids:
+        for comp in db.companies.find({"company_id": {"$in": list(employer_company_ids)}}, {"company_id": 1, "company_name": 1, "logo": 1}):
+            companies_by_id[comp["company_id"]] = comp
+
     result = []
     for u in users:
-        last_msg = db.chats.find_one({"$or": [{"sender_id": user_id, "recipient_id": u["user_id"]}, {"sender_id": u["user_id"], "recipient_id": user_id}]}, sort=[("time", -1)])
+        last_msg = db.chats.find_one({
+            "$or": [
+                {"sender_id": user_id, "recipient_id": u["user_id"]},
+                {"sender_id": u["user_id"], "recipient_id": user_id}
+            ]
+        }, sort=[("time", -1)])
+        # Unread count (messages sent TO current user from this partner not marked read)
+        unread_count = db.chats.count_documents({
+            "sender_id": u["user_id"],
+            "recipient_id": user_id,
+            "$or": [
+                {"read": False},
+                {"read": {"$exists": False}}
+            ]
+        })
+        company_name = ""
+        company_logo = None
+        company_id = u.get("company_id")
+        if u.get("user_type") == "employer" and company_id:
+            company_doc = companies_by_id.get(company_id)
+            if company_doc:
+                company_name = company_doc.get("company_name", "")
+                company_logo = company_doc.get("logo")
+
         result.append({
             "id": u["user_id"],
-            "name": f"{u.get('first_name', '')} {u.get('last_name', '')}",
+            # Personal name kept for chat header context
+            "name": f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+            "company_name": company_name,
+            "company_id": company_id or "",
             "avatar": u.get("avatar", "/placeholder-user.jpg"),
+            "company_logo": company_logo,  # For clients that may want to fetch directly
             "lastMessage": last_msg["text"] if last_msg else "",
-            "lastMessageTime": last_msg["time"][-8:] if last_msg else ""
+            # Keep prior short time format for backward compatibility
+            "lastMessageTime": last_msg["time"][-8:] if last_msg else "",
+            # Also include full timestamp for better client-side sorting (non-breaking extra field)
+            "lastMessageTimestamp": last_msg["time"] if last_msg else "",
+            "unreadCount": unread_count
         })
     return result
 
@@ -111,13 +151,43 @@ async def get_chat_messages(recipient_id: str, authorization: str = Header(None)
     token = authorization.split(" ", 1)[1]
     user_id = get_user_id_from_token(token)
     # Get all messages between user and recipient
-    messages = list(db.chats.find({
+    query = {
         "$or": [
             {"sender_id": user_id, "recipient_id": recipient_id},
             {"sender_id": recipient_id, "recipient_id": user_id}
         ]
-    }, {"_id": 0}))
+    }
+    messages = list(db.chats.find(query, {"_id": 0}))
+    # Mark all messages sent to current user as read
+    db.chats.update_many({
+        "sender_id": recipient_id,
+        "recipient_id": user_id,
+        "$or": [
+            {"read": False},
+            {"read": {"$exists": False}}
+        ]
+    }, {"$set": {"read": True}})
+    # Update local message copies to reflect new state
+    for m in messages:
+        if m["sender_id"] == recipient_id:
+            m["read"] = True
     return messages
+
+@router.post("/chat/mark-read/{other_id}")
+async def mark_conversation_read(other_id: str, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    token = authorization.split(" ", 1)[1]
+    user_id = get_user_id_from_token(token)
+    result = db.chats.update_many({
+        "sender_id": other_id,
+        "recipient_id": user_id,
+        "$or": [
+            {"read": False},
+            {"read": {"$exists": False}}
+        ]
+    }, {"$set": {"read": True}})
+    return {"marked": result.modified_count}
 
 @router.get("/chat/profile-photo/{user_id}")
 async def get_user_profile_photo(user_id: str):

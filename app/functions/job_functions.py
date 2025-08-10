@@ -22,6 +22,8 @@ def create_job(job_data: dict):
 
 def list_jobs():
     now = get_ist_now()
+    # Auto-mark expired jobs before listing
+    _auto_mark_expired(now)
     two_days_ago = now - timedelta(days=2)
     jobs = db.jobs.find({}, {"_id": 0})
     job_list = []
@@ -39,6 +41,7 @@ def list_jobs():
     return job_list
 
 def get_job_by_title(title: str):
+    _auto_mark_expired(get_ist_now())
     return db.jobs.find_one({"title": title}, {"_id": 0})
 
 def remove_job(job_id: str, employer_id: str):
@@ -73,6 +76,7 @@ def update_job_details(job_id: str, employer_id: str, update_data: dict):
     return {"msg": "Job not found or unauthorized"}
 
 def advanced_search_jobs(query=None, category=None, job_type=None, experience_level=None, min_salary=None, max_salary=None, location=None, industry=None, skills=None):
+    _auto_mark_expired(get_ist_now())
     filters = {}
     if query:
         filters["$or"] = [
@@ -143,6 +147,7 @@ def get_popular_job_categories():
     return {"categories": list(db.jobs.aggregate(pipeline))}
     
 def get_jobs_by_company(company_id: str):
+    _auto_mark_expired(get_ist_now())
     company_jobs = db.jobs.find({"company_id": company_id}, {"_id": 0})
     logo_id = db.companies.find_one({"company_id": company_id}, {"logo": 1}).get("logo")
         
@@ -153,3 +158,18 @@ def get_jobs_by_company(company_id: str):
         job["logo_url"] = f"{BASE_URL}/api/company/logo/{logo_id}"
         
     return list(company_jobs)
+
+# --- Automatic expiration helper ---
+def _auto_mark_expired(now=None):
+    """Update status to 'expired' for any active jobs whose expires_at has passed.
+
+    This function is idempotent and cheap (single update_many). Call it at the
+    start of read paths to ensure clients see fresh status without a cron.
+    """
+    if now is None:
+        now = get_ist_now()
+    try:
+        db.jobs.update_many({"status": "active", "expires_at": {"$lt": now}}, {"$set": {"status": "expired"}})
+    except Exception:
+        # Silently ignore to avoid breaking primary flows; optionally log.
+        pass

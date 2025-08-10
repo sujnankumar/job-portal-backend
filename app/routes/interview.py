@@ -73,7 +73,22 @@ async def schedule_interview(
         if not data.get(field):
             raise HTTPException(status_code=400, detail=f"{field} is required")
 
-    # Combine date and startTime into scheduled_time
+    # Prevent duplicate scheduling for same candidate & job
+    existing = db.interviews.find_one({
+        "candidate_id": data["candidate_id"],
+        "job_id": data["job_id"]
+    })
+    if existing:
+        # Return conflict advising to use edit endpoint
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Interview already scheduled for this candidate and job. Use edit endpoint to reschedule.",
+                "interview_id": str(existing.get("_id"))
+            }
+        )
+    # Combine date and startTime into scheduled_time (ISO format)
+
     from datetime import datetime
     try:
         scheduled_time = datetime.strptime(
@@ -184,13 +199,15 @@ async def get_employer_interviews(authorization: str = Header(None)):
 
 
 @router.get("/details/{job_id}")
-async def get_interview_details(job_id: str, authorization: str = Header(None)):
+async def get_interview_details(job_id: str, candidate_id: str | None = None, authorization: str = Header(None)):
     user_id, user_type = get_current_user_id_and_type(authorization)
     query = {"job_id": job_id}
     if user_type == "job_seeker":
         query["candidate_id"] = user_id
     elif user_type == "employer":
         query["hr_id"] = user_id
+        if candidate_id:
+            query["candidate_id"] = candidate_id
     else:
         raise HTTPException(status_code=403, detail="Unauthorized user type")
     interview = db.interviews.find_one(query)
