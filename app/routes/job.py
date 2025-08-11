@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException, Header
-from app.functions import job_functions, auth_functions
+from app.functions import job_functions, auth_functions, subscription_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from app.utils.timezone_utils import get_ist_now
@@ -27,11 +27,17 @@ async def post_job(request: Request, authorization: str = Header(None)):
         raise HTTPException(status_code=403, detail="Only employers can post jobs")
     data = await request.json()
     user = auth_functions.get_user_by_id(payload.get("user_id"))
+    # Enforce subscription posting limits
+    can_post, plan_id, reason, subscription_id = subscription_functions.can_post_job(payload.get("user_id"))
+    if not can_post:
+        raise HTTPException(status_code=403, detail=f"Cannot post job: {reason}. Upgrade your plan.")
     data["employer_id"] = payload.get("user_id")
     data["company_id"] = user.get("company_id", "")
     # Set job visibility, default to public if not provided
     data["visibility"] = data.get("visibility", "public")
-    return job_functions.create_job(data)
+    result = job_functions.create_job(data)
+    subscription_functions.increment_post_counters(payload.get("user_id"), subscription_id)
+    return result
 
 @router.get("/list")
 async def list_all_jobs():

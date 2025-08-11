@@ -73,6 +73,46 @@ def mark_all_notifications_read(token: str):
     db.notifications.update_many({"user_id": user["user_id"]}, {"$set": {"read": True}})
     return {"success": True}
 
+@router.post("/mark-unread/{notification_id}")
+def mark_notification_unread(notification_id: str, token: str):
+    """Mark a single notification as unread."""
+    user = get_current_user(token)
+    result = db.notifications.update_one(
+        {"_id": ObjectId(notification_id), "user_id": user["user_id"]},
+        {"$set": {"read": False}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"success": True}
+
+@router.delete("/{notification_id}")
+def delete_notification(notification_id: str, token: str):
+    """Delete a single notification belonging to the current user."""
+    user = get_current_user(token)
+    result = db.notifications.delete_one({"_id": ObjectId(notification_id), "user_id": user["user_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"success": True}
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+@router.delete("/")
+def bulk_delete_notifications(request: BulkDeleteRequest, token: str):
+    """Delete a list of notifications for the current user."""
+    user = get_current_user(token)
+    # Filter valid ObjectIds
+    object_ids = []
+    for _id in request.ids:
+        try:
+            object_ids.append(ObjectId(_id))
+        except Exception:
+            continue
+    if not object_ids:
+        return {"success": True, "deleted": 0}
+    result = db.notifications.delete_many({"_id": {"$in": object_ids}, "user_id": user["user_id"]})
+    return {"success": True, "deleted": result.deleted_count}
+
 # --- WebSocket for real-time notifications ---
 class NotificationManager:
     def __init__(self):
