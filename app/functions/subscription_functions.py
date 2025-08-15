@@ -2,8 +2,11 @@ import uuid
 import hashlib
 import base64
 import json
+import logging
 import requests
 from datetime import datetime, timedelta
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from app.db import db
 from app.config.settings import (
     PHONEPE_MERCHANT_ID,
@@ -13,6 +16,8 @@ from app.config.settings import (
     PHONEPE_REDIRECT_BASE,
 )
 from app.utils.timezone_utils import get_ist_now
+
+logger = logging.getLogger(__name__)
 
 
 PLANS = {
@@ -65,6 +70,46 @@ def get_plan(plan_id: str):
 
 def _subscription_collection():
     return db.subscriptions
+
+
+def ensure_subscription_indexes():
+    """Create indexes needed for performance and uniqueness.
+
+    Safe to call multiple times; MongoDB will no-op if index exists. Called at app startup instead of import time
+    to avoid slowing cold starts in serverless/container environments.
+    """
+    try:
+        db.jobs.create_index([("employer_id", 1), ("posted_at", 1)])
+    except Exception as e:  # pragma: no cover
+        logger.debug("jobs index create skipped: %s", e)
+    try:
+        db.subscriptions.create_index([("employer_id", 1), ("status", 1), ("expires_at", 1)])
+        db.subscriptions.create_index([("company_id", 1), ("status", 1), ("expires_at", 1)])
+        db.subscriptions.create_index([("subscription_id", 1)], unique=True)
+        db.subscriptions.create_index([("plan_id", 1)])
+    except Exception as e:  # pragma: no cover
+        logger.debug("subscriptions index create skipped: %s", e)
+    try:
+        db.subscription_orders.create_index([("merchant_transaction_id", 1)], unique=True)
+        db.subscription_orders.create_index([("employer_id", 1), ("status", 1)])
+        db.subscription_orders.create_index([("plan_id", 1)])
+        # TTL for pending orders (expire after 1 day)
+        db.subscription_orders.create_index(
+            [("created_at", 1)],
+            expireAfterSeconds=86400,
+            partialFilterExpression={"status": "pending"},
+        )
+    except Exception as e:  # pragma: no cover
+        logger.debug("subscription_orders index create skipped: %s", e)
+    try:
+        db.phonepe_callbacks.create_index([("merchant_transaction_id", 1)])
+        db.phonepe_callbacks.create_index([("received_at", 1)])
+    except Exception as e:  # pragma: no cover
+        logger.debug("phonepe_callbacks index create skipped: %s", e)
+
+
+# Backwards compatibility name (if other modules imported it before refactor)
+_ensure_indexes = ensure_subscription_indexes
 
 
 def get_active_subscription(employer_id: str):
@@ -123,31 +168,63 @@ def get_company_enterprise_subscription(company_id: str):
     return sub
 
 
+def _resolve_plan(sub: dict | None):
+    """Return the effective plan dict for a subscription.
+
+    Uses stored snapshot (to honor legacy terms) but falls back to current PLANS if snapshot missing.
+    """
+    if not sub:
+        return PLANS["free"], "free"
+    snapshot = sub.get("plan_snapshot")
+    plan_id = sub.get("plan_id", "free")
+    if snapshot and isinstance(snapshot, dict):
+        return snapshot, plan_id
+    return PLANS.get(plan_id, PLANS["free"]), plan_id
+
+
+def get_effective_subscription(employer_id: str):
+    """Fetch the effective active subscription (personal first, else company enterprise) with a single
+    subscription collection query (after one user query).
+    """
+    now = get_ist_now()
+    user = db.users.find_one({"user_id": employer_id}, {"company_id": 1, "_id": 0})
+    company_id = user.get("company_id") if user else None
+    # Query for both possible active subs in one round trip
+    subs_cursor = db.subscriptions.find(
+        {
+            "status": "active",
+            "expires_at": {"$gt": now},
+            "$or": [
+                {"employer_id": employer_id},
+                {"company_id": company_id, "plan_id": "enterprise"} if company_id else {"employer_id": employer_id},
+            ],
+        }
+    )
+    personal = None
+    enterprise = None
+    for s in subs_cursor:
+        if s.get("employer_id") == employer_id and s.get("scope") in ("employer", None):
+            personal = s
+        if s.get("plan_id") == "enterprise":
+            enterprise = s
+    # Preference: personal over enterprise (except maybe if we want enterprise override; current logic prefers personal)
+    chosen = personal or enterprise
+    if chosen:
+        chosen.pop("_id", None)
+    return chosen
+
+
 def can_post_job(employer_id: str):
-    """Determine if employer can post a job, considering company-wide enterprise subscription.
+    """Determine if employer can post a job.
 
     Returns (allowed: bool, plan_id: str, message: str, subscription_id: str | None)
     """
-    sub = get_active_subscription(employer_id)
-    plan_id = "free"
-    plan = PLANS[plan_id]
+    sub = get_effective_subscription(employer_id)
     now = get_ist_now()
-
-    # Fetch employer user document to derive company_id
-    user = db.users.find_one({"user_id": employer_id})
-    company_id = user.get("company_id") if user else None
-
-    # If no personal subscription, check for company enterprise
-    enterprise_sub = None
-    if not sub and company_id:
-        enterprise_sub = get_company_enterprise_subscription(company_id)
-        if enterprise_sub:
-            sub = enterprise_sub
+    plan, plan_id = _resolve_plan(sub)
 
     if sub:
-        plan_id = sub["plan_id"]
-        plan = sub["plan_snapshot"]
-        # Reset counters for non-unlimited plans (or keep counters for enterprise to track usage if present)
+        # Reset counters for limited plans at boundary
         updates = {}
         if sub.get("month") != now.month:
             updates["posts_used_month"] = 0
@@ -158,15 +235,10 @@ def can_post_job(employer_id: str):
         if updates:
             _subscription_collection().update_one({"subscription_id": sub["subscription_id"]}, {"$set": updates})
             sub.update(updates)
-
-        # If enterprise plan found (company scope) -> unlimited
-        if plan_id == "enterprise":
-            return True, plan_id, "OK", sub["subscription_id"]
-        # Premium unlimited for single employer
-        if plan_id == "premium":
+        # Unlimited plans
+        if plan_id in ("enterprise", "premium"):
             return True, plan_id, "OK", sub["subscription_id"]
 
-    # Evaluate limits for limited plans (free/basic/pro)
     yearly_limit = plan.get("yearly_post_limit")
     monthly_limit = plan.get("monthly_post_limit")
     used_year = sub.get("posts_used_year", 0) if sub else _count_jobs(employer_id, year=now.year)
@@ -176,6 +248,104 @@ def can_post_job(employer_id: str):
     if monthly_limit is not None and used_month >= monthly_limit:
         return False, plan_id, "Monthly post limit reached", sub["subscription_id"] if sub else None
     return True, plan_id, "OK", sub["subscription_id"] if sub else None
+
+
+def ensure_free_subscription(employer_id: str):
+    """Ensure a free subscription document exists for this employer to track counters.
+
+    Returns the active subscription doc (free) without the _id field.
+    """
+    now = get_ist_now()
+    sub = get_active_subscription(employer_id)
+    if sub:
+        return sub
+    # Create a free plan to track counters atomically for non-paying employers
+    return create_or_update_subscription(employer_id, "free", "FREE-AUTO", duration_days=365)
+
+
+def attempt_post_job(employer_id: str):
+    """Atomically check posting limits and increment counters by 1."""
+    return attempt_bulk_post_jobs(employer_id, 1)
+
+
+def attempt_bulk_post_jobs(employer_id: str, count: int):
+    """Atomically attempt to post multiple jobs at once.
+
+    Returns (allowed: bool, plan_id: str, message: str, subscription_id: str | None)
+    """
+    if count <= 0:
+        return False, "free", "Count must be positive", None
+    now = get_ist_now()
+    sub = get_effective_subscription(employer_id)
+    if not sub:
+        sub = ensure_free_subscription(employer_id)
+    plan, plan_id = _resolve_plan(sub)
+    monthly_limit = plan.get("monthly_post_limit")
+    yearly_limit = plan.get("yearly_post_limit")
+
+    # Unlimited plans OR missing limits (None) => increment without gating
+    if plan_id in ("premium", "enterprise") or monthly_limit is None or yearly_limit is None:
+        updated = _subscription_collection().find_one_and_update(
+            {
+                "subscription_id": sub["subscription_id"],
+                "status": "active",
+                "expires_at": {"$gt": now},
+            },
+            {
+                "$inc": {"posts_used_year": count, "posts_used_month": count},
+                "$set": {"month": now.month, "year": now.year},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            return False, plan_id, "Subscription inactive or expired", sub["subscription_id"]
+        return True, plan_id, "OK", sub["subscription_id"]
+
+    # Reset counters if boundary changed
+    reset_updates = {}
+    if sub.get("month") != now.month:
+        reset_updates["posts_used_month"] = 0
+        reset_updates["month"] = now.month
+    if sub.get("year") != now.year:
+        reset_updates["posts_used_year"] = 0
+        reset_updates["year"] = now.year
+    if reset_updates:
+        _subscription_collection().update_one({"subscription_id": sub["subscription_id"]}, {"$set": reset_updates})
+        sub.update(reset_updates)
+
+    # Build gating filter: current usage + count <= limit
+    filter_query = {
+        "subscription_id": sub["subscription_id"],
+        "status": "active",
+        "expires_at": {"$gt": now},
+        "month": now.month,
+        "year": now.year,
+    }
+    if monthly_limit is not None:
+        filter_query["posts_used_month"] = {"$lte": (monthly_limit - count)}
+    if yearly_limit is not None:
+        filter_query["posts_used_year"] = {"$lte": (yearly_limit - count)}
+
+    updated = _subscription_collection().find_one_and_update(
+        filter_query,
+        {"$inc": {"posts_used_year": count, "posts_used_month": count}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        # Determine reason
+        current = _subscription_collection().find_one({"subscription_id": sub["subscription_id"]}) or {}
+        used_m = current.get("posts_used_month", 0)
+        used_y = current.get("posts_used_year", 0)
+        if yearly_limit is not None and used_y >= yearly_limit:
+            return False, plan_id, "Yearly post limit reached", sub["subscription_id"]
+        if monthly_limit is not None and used_m >= monthly_limit:
+            return False, plan_id, "Monthly post limit reached", sub["subscription_id"]
+        if yearly_limit is not None and used_y + count > yearly_limit:
+            return False, plan_id, "Bulk exceeds yearly limit", sub["subscription_id"]
+        if monthly_limit is not None and used_m + count > monthly_limit:
+            return False, plan_id, "Bulk exceeds monthly limit", sub["subscription_id"]
+        return False, plan_id, "Post limit reached", sub["subscription_id"]
+    return True, plan_id, "OK", sub["subscription_id"]
 
 
 def increment_post_counters(employer_id: str, subscription_id: str | None = None):
@@ -286,10 +456,16 @@ def verify_payment(merchant_transaction_id: str):
     return data
 
 
-def handle_payment_callback(employer_id: str, merchant_transaction_id: str):
-    status_data = verify_payment(merchant_transaction_id)
+def handle_payment_callback(employer_id: str, merchant_transaction_id: str, verified: bool = False, pre_status: dict | None = None):
+    """Finalize subscription on callback. If verified is True, skip calling verify_payment.
+
+    pre_status can be provided for logging or future use; currently ignored if verified.
+    """
+    status_data = pre_status or {}
+    if not verified:
+        status_data = verify_payment(merchant_transaction_id)
     # PhonePe success code typically SUCCESS
-    success = status_data.get("success") and status_data.get("code") == "SUCCESS"
+    success = (status_data.get("success") and status_data.get("code") == "SUCCESS") if not verified else True
     if success:
         # Determine plan by looking up a pending order; for simplicity assume plan_id stored earlier
         order = db.subscription_orders.find_one({"merchant_transaction_id": merchant_transaction_id})
@@ -313,4 +489,12 @@ def create_pending_order(employer_id: str, plan_id: str, merchant_transaction_id
     }
     if plan_id == "enterprise" and company_id:
         order["company_id"] = company_id
-    db.subscription_orders.insert_one(order)
+    try:
+        db.subscription_orders.insert_one(order)
+    except DuplicateKeyError:
+        # Idempotent: if the order exists, ensure it is still pending and update timestamp
+        db.subscription_orders.update_one(
+            {"merchant_transaction_id": merchant_transaction_id},
+            {"$set": {"employer_id": employer_id, "plan_id": plan_id, "status": "pending", "updated_at": get_ist_now()}},
+            upsert=True,
+        )

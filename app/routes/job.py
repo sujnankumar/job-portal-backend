@@ -27,8 +27,8 @@ async def post_job(request: Request, authorization: str = Header(None)):
         raise HTTPException(status_code=403, detail="Only employers can post jobs")
     data = await request.json()
     user = auth_functions.get_user_by_id(payload.get("user_id"))
-    # Enforce subscription posting limits
-    can_post, plan_id, reason, subscription_id = subscription_functions.can_post_job(payload.get("user_id"))
+    # Enforce subscription posting limits (atomic)
+    can_post, plan_id, reason, subscription_id = subscription_functions.attempt_post_job(payload.get("user_id"))
     if not can_post:
         raise HTTPException(status_code=403, detail=f"Cannot post job: {reason}. Upgrade your plan.")
     data["employer_id"] = payload.get("user_id")
@@ -36,7 +36,6 @@ async def post_job(request: Request, authorization: str = Header(None)):
     # Set job visibility, default to public if not provided
     data["visibility"] = data.get("visibility", "public")
     result = job_functions.create_job(data)
-    subscription_functions.increment_post_counters(payload.get("user_id"), subscription_id)
     return result
 
 @router.get("/list")

@@ -4,12 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.functions import job_functions
 from contextlib import asynccontextmanager
+from app.functions.subscription_functions import ensure_subscription_indexes
 
 
 scheduler = BackgroundScheduler()
 
 @asynccontextmanager
 async def lifespan(app):
+    # Create indexes once at startup (non-blocking critical path kept minimal)
+    try:
+        ensure_subscription_indexes()
+    except Exception:
+        pass
     scheduler.start()
     yield
     scheduler.shutdown()

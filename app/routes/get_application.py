@@ -87,7 +87,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
     }
     
     file, resume_data = resume_functions.get_resume_by_file_id(application.get("resume_file_id", None))
-    
+    # print(resume_functions.get_resume_by_file_id(application.get("resume_file_id", None)))
     if file and resume_data:
         application["resume"] = {
             "file": base64.b64encode(file).decode("utf-8") if file else None,
@@ -129,7 +129,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
         {"status": "applied", "date": application.get("applied_at", None), "description": "Application submitted"},
         status_timeline
     ]
-    
+    # print("application resume : ",application["resume"])
     return {"application": application}
 
 @router.get("/application/job_id/{job_id}")

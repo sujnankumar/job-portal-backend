@@ -118,11 +118,11 @@ def list_resumes():
     return list(db.resumes.find({}, {"_id": 0}))
 
 def get_resume_by_file_id(file_id: str):
-    print(file_id)
+    # print(file_id)
     resume = db.resumes.find_one({"file_id": ObjectId(file_id)})
     if not resume:
         resume = db.temp_resume.find_one({"file_id": ObjectId(file_id)})
-    print("The final retrieved resume : ",resume)
+    # print("The final retrieved resume : ",resume)
     if not resume:
         return None, None
     file = gfs.get(resume.get("file_id")).read()
