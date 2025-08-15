@@ -5,20 +5,40 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.functions import job_functions
 from contextlib import asynccontextmanager
 from app.functions.subscription_functions import ensure_subscription_indexes
+import logging
+import asyncio
 
 
 scheduler = BackgroundScheduler()
 
 @asynccontextmanager
 async def lifespan(app):
-    # Create indexes once at startup (non-blocking critical path kept minimal)
+    logger = logging.getLogger("app.lifespan")
+    # Create indexes once at startup (keep failures non-fatal)
     try:
         ensure_subscription_indexes()
-    except Exception:
-        pass
-    scheduler.start()
-    yield
-    scheduler.shutdown()
+    except Exception as e:  # pragma: no cover
+        logger.warning("Index creation skipped: %s", e)
+    # Start scheduler
+    try:
+        if not scheduler.running:
+            scheduler.start()
+    except Exception as e:  # pragma: no cover
+        logger.error("Scheduler start failed: %s", e)
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Expected on shutdown / Ctrl+C; suppress noisy stack
+        logger.info("Lifespan cancelled (shutdown)")
+    except Exception as e:  # pragma: no cover
+        logger.exception("Unhandled lifespan exception: %s", e)
+        raise
+    finally:
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+        except Exception as e:  # pragma: no cover
+            logger.debug("Scheduler shutdown issue: %s", e)
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(

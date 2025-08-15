@@ -128,3 +128,48 @@ async def onboarding(request: Request):
         return result
     else:
         return {"message": "Onboarding completed successfully"}
+
+
+@router.post("/password-reset/initiate")
+async def password_reset_initiate(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email required")
+    ok = auth_functions.initiate_password_reset(email)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Email does not exist. Please recheck.")
+    return {"message": "OTP sent"}
+
+
+@router.post("/password-reset/verify-otp")
+async def password_reset_verify_otp(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    otp = data.get("otp")
+    print(data)
+    if not email or not otp:
+        raise HTTPException(status_code=400, detail="Email and OTP required")
+    reset_token = auth_functions.verify_reset_otp(email, otp)
+    if not reset_token:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    return {"reset_token": reset_token}
+
+
+@router.post("/password-reset/confirm")
+async def password_reset_confirm(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    reset_token = data.get("reset_token")
+    new_password = data.get("new_password")
+    confirm_password = data.get("confirm_password")
+    if not all([email, reset_token, new_password, confirm_password]):
+        raise HTTPException(status_code=400, detail="All fields required")
+    if new_password != confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    ok = auth_functions.reset_password_with_token(email, reset_token, new_password)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    return {"message": "Password updated successfully"}
