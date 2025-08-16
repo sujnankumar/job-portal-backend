@@ -45,10 +45,71 @@ def get_job_by_title(title: str):
     return db.jobs.find_one({"title": title}, {"_id": 0})
 
 def remove_job(job_id: str, employer_id: str):
-    result = db.jobs.delete_one({"job_id": job_id, "employer_id": employer_id})
-    if result.deleted_count == 1:
-        return {"msg": "Job removed"}
-    return {"msg": "Job not found or unauthorized"}
+    """Archive a job and cascade archive its applications & interviews.
+
+    Steps:
+    1. Fetch job (must belong to employer)
+    2. Copy job doc to deleted_jobs with metadata (deleted_at, original_status)
+    3. Copy related applications -> deleted_applications (add deleted_at)
+    4. Copy related interviews -> deleted_interviews (add deleted_at)
+    5. Delete originals from live collections
+    """
+    job = db.jobs.find_one({"job_id": job_id, "employer_id": employer_id})
+    if not job:
+        # Fallback: if it was expired and moved, try expired_jobs collection
+        job = db.expired_jobs.find_one({"job_id": job_id, "employer_id": employer_id})
+        if not job:
+            return {"msg": "Job not found or unauthorized"}
+    now = get_ist_now()
+    # Related data
+    applications = list(db.applications.find({"job_id": job_id}))
+    interviews = list(db.interviews.find({"job_id": job_id}))
+
+    # Prepare archival copies (strip _id to avoid clashes)
+    job_copy = {k: v for k, v in job.items() if k != "_id"}
+    job_copy.update({
+        "deleted_at": now,
+        "original_status": job.get("status"),
+        "archived_applications_count": len(applications),
+        "archived_interviews_count": len(interviews),
+    "status": "deleted",
+    })
+    try:
+        db.deleted_jobs.insert_one(job_copy)
+    except Exception:
+        # If insertion fails, abort to avoid data loss
+        return {"msg": "Failed to archive job"}
+
+    if applications:
+        archived_apps = []
+        for app in applications:
+            app_copy = {k: v for k, v in app.items() if k != "_id"}
+            app_copy["deleted_at"] = now
+            archived_apps.append(app_copy)
+        try:
+            db.deleted_applications.insert_many(archived_apps)
+        except Exception:
+            pass  # Non-fatal; originals will still be deleted
+    if interviews:
+        archived_interviews = []
+        for iv in interviews:
+            iv_copy = {k: v for k, v in iv.items() if k != "_id"}
+            iv_copy["deleted_at"] = now
+            archived_interviews.append(iv_copy)
+        try:
+            db.deleted_interviews.insert_many(archived_interviews)
+        except Exception:
+            pass
+
+    # Delete originals
+    db.jobs.delete_one({"job_id": job_id})
+    db.expired_jobs.delete_one({"job_id": job_id})
+    if applications:
+        db.applications.delete_many({"job_id": job_id})
+    if interviews:
+        db.interviews.delete_many({"job_id": job_id})
+
+    return {"msg": "Job deleted and archived", "applications_archived": len(applications), "interviews_archived": len(interviews)}
 
 def update_job_visibility(job_id: str, visibility: str, employer_id: str):
     if visibility not in ["public", "private"]:
@@ -113,16 +174,24 @@ def move_expired_jobs():
     return {"moved": len(expired_jobs)}
 
 def reactivate_expired_job(job_id: str, employer_id: str, validity_days: int = 15):
-    job = db.expired_jobs.find_one({"job_id": job_id, "employer_id": employer_id})
+    """Reactivate an expired job in-place; mark with reactivated flag.
+
+    Avoid inserting a duplicate document (previous implementation inserted a new doc).
+    """
+    job = db.jobs.find_one({"job_id": job_id, "employer_id": employer_id})
     if not job:
-        return {"msg": "Expired job not found or unauthorized"}
-    # Remove MongoDB _id and update fields
-    job.pop("_id", None)
+        return {"msg": "Job not found or unauthorized"}
+    if job.get("status") != "expired":
+        return {"msg": "Job is not expired"}
     now = get_ist_now()
-    job["status"] = "active"
-    job["posted_at"] = now
-    job["expires_at"] = now + timedelta(days=validity_days)
-    db.jobs.insert_one(job)
+    update_fields = {
+        "status": "active",
+        "posted_at": now,
+        "expires_at": now + timedelta(days=validity_days),
+        "reactivated": True
+    }
+    db.jobs.update_one({"job_id": job_id, "employer_id": employer_id}, {"$set": update_fields})
+    # Clean up any archived copy in expired_jobs collection
     db.expired_jobs.delete_one({"job_id": job_id, "employer_id": employer_id})
     return {"msg": "Job reactivated", "job_id": job_id}
 

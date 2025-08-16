@@ -111,6 +111,7 @@ async def get_job_postings(authorization: str = Header(None)):
         raise HTTPException(status_code=403, detail="Only employers can access job postings")
     employer_id = user.get("user_id")
     jobs = list(db.jobs.find({"employer_id": employer_id}, {"_id": 0}))
+    deleted_jobs = list(db.deleted_jobs.find({"employer_id": employer_id}, {"_id": 0}))
     job_postings = []
     for job in jobs:
         applications = db.applications.count_documents({"job_id": job["job_id"]})
@@ -123,8 +124,24 @@ async def get_job_postings(authorization: str = Header(None)):
             "postedDate": job.get("posted_at").strftime("%Y-%m-%d") if job.get("posted_at") else None,
             "expiryDate": job.get("expires_at").strftime("%Y-%m-%d") if job.get("expires_at") else None,
             "status": job.get("status", "active"),
+            "reactivated": job.get("reactivated", False),
             "applications": applications,
             "views": job.get("views", 0)
+        })
+    # Include deleted (archived) jobs
+    for job in deleted_jobs:
+        job_postings.append({
+            "id": job.get("job_id"),
+            "title": job.get("title"),
+            "location": job.get("location"),
+            "department": job.get("department"),
+            "postedDate": job.get("posted_at").strftime("%Y-%m-%d") if job.get("posted_at") else None,
+            "expiryDate": job.get("expires_at").strftime("%Y-%m-%d") if job.get("expires_at") else None,
+            "status": "deleted",
+            "reactivated": False,
+            "applications": job.get("archived_applications_count", 0),
+            "views": job.get("views", 0),
+            "deletedAt": job.get("deleted_at").strftime("%Y-%m-%d") if job.get("deleted_at") else None
         })
     return {"jobPostings": job_postings}
 
