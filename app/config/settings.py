@@ -39,9 +39,10 @@ PHONEPE_SALT_INDEX="1"
 # Use base /apis; code falls back to sandbox path automatically
 PHONEPE_BASE_URL="https://api-preprod.phonepe.com/apis"
 # Use backend origin so callback hits FastAPI route
-PHONEPE_REDIRECT_BASE="http://localhost:8000"
+# PHONEPE_REDIRECT_BASE="http://localhost:8000"
+PHONEPE_REDIRECT_BASE="https://alluring-bravery-production.up.railway.app"
 PHONEPE_MODE="live"
 
 # Frontend base URL used for user-facing redirects after payment (success/pending/error)
 # Configure via env FRONTEND_BASE_URL in deployment (e.g. https://app.example.com)
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://job-portal-frontend-bice-gamma.vercel.app")
