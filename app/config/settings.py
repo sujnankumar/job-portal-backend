@@ -16,8 +16,17 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
 
 # PhonePe Payment Gateway configuration (set these in your environment)
-PHONEPE_MERCHANT_ID = os.getenv("PHONEPE_MERCHANT_ID")
-PHONEPE_SALT_KEY = os.getenv("PHONEPE_SALT_KEY")  # Secret / Salt Key
-PHONEPE_SALT_INDEX = os.getenv("PHONEPE_SALT_INDEX", "1")  # Salt Index, typically '1'
-PHONEPE_BASE_URL = os.getenv("PHONEPE_BASE_URL", "https://api-preprod.phonepe.com/apis")  # Sandbox default
-PHONEPE_REDIRECT_BASE = os.getenv("PHONEPE_REDIRECT_BASE", BASE_URL)  # Where PhonePe should redirect after payment
+def _clean(v: str | None, default: str | None = None):
+	if v is None:
+		return default
+	return v.strip()
+
+PHONEPE_MERCHANT_ID = _clean(os.getenv("PHONEPE_MERCHANT_ID"))
+PHONEPE_SALT_KEY = _clean(os.getenv("PHONEPE_SALT_KEY"))  # Secret / Salt Key
+PHONEPE_SALT_INDEX = _clean(os.getenv("PHONEPE_SALT_INDEX"), "1")  # Salt Index, typically '1'
+PHONEPE_BASE_URL = _clean(os.getenv("PHONEPE_BASE_URL"), "https://api-preprod.phonepe.com/apis") or "https://api-preprod.phonepe.com/apis"
+# Ensure no trailing slash for consistent joining
+if PHONEPE_BASE_URL.endswith('/'):
+	PHONEPE_BASE_URL = PHONEPE_BASE_URL.rstrip('/')
+PHONEPE_REDIRECT_BASE = _clean(os.getenv("PHONEPE_REDIRECT_BASE"), BASE_URL) or BASE_URL  # Where PhonePe should redirect after payment
+PHONEPE_MODE = _clean(os.getenv("PHONEPE_MODE"), "live") or "live"  # 'live' | 'mock'
