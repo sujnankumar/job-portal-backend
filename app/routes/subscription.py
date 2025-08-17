@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 import hashlib
 import json
@@ -6,7 +7,7 @@ import json
 from app.utils.jwt_handler import verify_token
 from app.functions import subscription_functions as subs
 from app.db import db
-from app.config.settings import PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX
+from app.config.settings import PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX, FRONTEND_BASE_URL
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -49,6 +50,21 @@ async def initiate_payment(plan_id: str, request: Request):
     """Initiate payment for a subscription plan."""
     user = _auth_employer(request)
     plan_id = plan_id.strip().lower()
+
+    # Prevent downgrades (only allow same or higher tier purchases)
+    PLAN_ORDER = ["free", "basic", "pro", "premium", "enterprise"]
+    try:
+        current_sub = subs.get_effective_subscription(user["user_id"])
+        current_plan = (current_sub or {}).get("plan_id", "free")
+        if plan_id not in PLAN_ORDER:
+            raise HTTPException(status_code=400, detail="Unknown plan")
+        if current_plan in PLAN_ORDER and PLAN_ORDER.index(plan_id) < PLAN_ORDER.index(current_plan):
+            raise HTTPException(status_code=400, detail=f"Downgrade not allowed from {current_plan} to {plan_id}")
+    except HTTPException:
+        raise
+    except Exception:
+        # If plan resolution fails, continue silently (failsafe)
+        pass
 
     merchant_txn_id = None
     if plan_id != "free":
@@ -93,10 +109,7 @@ async def phonepe_callback(merchant_transaction_id: str, request: Request):
     })
 
     def _verify_signature(payload_text: str, txn_id: str) -> str:
-        """
-        Compute expected X-VERIFY checksum for callback verification.
-        Note: For callbacks, the payload is the response body.
-        """
+        """Compute expected X-VERIFY checksum for callback verification."""
         endpoint = f"/pg/v1/status/{subs.PHONEPE_MERCHANT_ID}/{txn_id}"
         raw = payload_text + endpoint + PHONEPE_SALT_KEY
         sha256_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -134,16 +147,47 @@ async def phonepe_callback(merchant_transaction_id: str, request: Request):
 
 @router.get("/phonepe/callback/{merchant_transaction_id}")
 def phonepe_callback_get(merchant_transaction_id: str, request: Request):
-    """Handle PhonePe redirect callback (GET method)."""
-    order = db.subscription_orders.find_one({
-        "merchant_transaction_id": merchant_transaction_id
-    })
+    """Handle PhonePe redirect callback (GET) then bounce user to frontend UI.
 
+    Logic:
+    - Lookup order & evaluate payment status
+    - Build frontend redirect: /subscribe?success=1|pending=1|error=1&txn=...&plan=...
+    - If client explicitly wants JSON (Accept: application/json), return JSON
+    - Otherwise issue HTTP 302 redirect to FRONTEND_BASE_URL
+    """
+    order = db.subscription_orders.find_one({"merchant_transaction_id": merchant_transaction_id})
     if not order:
-        return {"status": "unknown_transaction"}
+        # Unknown transaction -> redirect with error flag
+        target = f"{FRONTEND_BASE_URL.rstrip('/')}/subscribe?error=1&reason=unknown&txn={merchant_transaction_id}"
+        if 'application/json' in (request.headers.get('accept') or '').lower():
+            return JSONResponse({
+                "status": "unknown_transaction",
+                "redirect_url": target,
+            }, status_code=404)
+        return RedirectResponse(target, status_code=302)
 
     result = subs.handle_payment_callback(order["employer_id"], merchant_transaction_id)
-    return result
+
+    status = result.get("status")  # expected: paid|pending|failed
+    plan_id = result.get("plan_id") or order.get("plan_id")
+    # Map internal status to query params
+    if status == "paid":
+        qp = "success=1"
+    elif status == "pending":
+        qp = "pending=1"
+    else:
+        qp = "error=1"
+
+    target = f"{FRONTEND_BASE_URL.rstrip('/')}/subscribe?{qp}&txn={merchant_transaction_id}"
+    if plan_id:
+        target += f"&plan={plan_id}"
+
+    # Always include redirect_url in JSON body for transparency
+    result["redirect_url"] = target
+
+    if 'application/json' in (request.headers.get('accept') or '').lower():
+        return JSONResponse(result)
+    return RedirectResponse(target, status_code=302)
 
 @router.post("/attempt-bulk-post/{count}")
 def attempt_bulk_post(count: int, request: Request):
@@ -188,3 +232,35 @@ def get_usage_stats(employer_id: str, request: Request):
         })
 
     return result
+
+@router.get("/can-post")
+def can_post_job(request: Request):
+    """Check if authenticated employer can post another job. Returns plan status and upgrade message if blocked."""
+    user = _auth_employer(request)
+    sub = subs.get_effective_subscription(user["user_id"])
+    plan, plan_id = subs._resolve_plan(sub) if sub else (subs.PLANS["free"], "free")
+
+    # Fallback counts
+    posts_used_month = sub.get("posts_used_month", 0) if sub else 0
+    posts_used_year = sub.get("posts_used_year", 0) if sub else 0
+    monthly_limit = plan.get("monthly_post_limit")
+    yearly_limit = plan.get("yearly_post_limit")
+
+    allowed = True
+    reason = None
+    if yearly_limit is not None and posts_used_year >= yearly_limit:
+        allowed = False
+        reason = "YEARLY_LIMIT"
+    elif monthly_limit is not None and posts_used_month >= monthly_limit:
+        allowed = False
+        reason = "MONTHLY_LIMIT"
+
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "plan_id": plan_id,
+        "monthly_limit": monthly_limit,
+        "yearly_limit": yearly_limit,
+        "posts_used_month": posts_used_month,
+        "posts_used_year": posts_used_year,
+    }
