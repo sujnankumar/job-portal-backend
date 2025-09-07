@@ -20,7 +20,7 @@ from app.utils.timezone_utils import get_ist_now
 
 logger = logging.getLogger(__name__)
 
-# Plans configuration (unchanged)
+# Plans configuration
 PLANS = {
     "free": {
         "price": 0,
@@ -51,7 +51,7 @@ PLANS = {
         "currency": "INR",
         "yearly_post_limit": None,
         "monthly_post_limit": None,
-        "access_limit": 1,
+        "access_limit": 5,
         "name": "Premium",
     },
     "enterprise": {
@@ -248,14 +248,14 @@ def can_post_job(employer_id: str):
 
         return True, plan_id, "OK", sub["subscription_id"]
 
-    # No active subscription - fallback to counting actual posts
+    # No active subscription - fallback to counting actual posts (free tier)
     used_year = _count_jobs(employer_id, year=now.year)
     used_month = _count_jobs(employer_id, year=now.year, month=now.month)
 
     if used_year >= PLANS["free"]["yearly_post_limit"]:
-        return False, "free", "Yearly post limit reached", None
+        return False, "free", "Yearly post limit reached. Please upgrade your plan.", None
     if used_month >= PLANS["free"]["monthly_post_limit"]:
-        return False, "free", "Monthly post limit reached", None
+        return False, "free", "Monthly post limit reached. Please upgrade your plan.", None
 
     return True, "free", "OK", None
 
@@ -274,7 +274,7 @@ def attempt_post_job(employer_id: str):
 def attempt_bulk_post_jobs(employer_id: str, count: int):
     """Atomically attempt to post multiple jobs at once."""
     if count <= 0:
-        return False, "free", "Count must be positive", None
+        return False, "none", "Count must be positive", None
 
     now = get_ist_now()
     sub = get_effective_subscription(employer_id)
