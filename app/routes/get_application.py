@@ -61,7 +61,7 @@ async def get_applications_for_id(app_id: str = Path(...), user=Depends(get_curr
     if job.get("show_salary", False):
         salary_str = str(job.get("min_salary", 0)) + " - " + str(job.get("max_salary", 0))
     else:
-        salary_str = "Not disclosed"
+        salary_str = "Undisclosed"
 
     application["job"] =  {
             "title": job.get("title", ""),
@@ -162,7 +162,7 @@ async def get_applications_for_id(job_id: str = Path(...), user=Depends(get_curr
     if job.get("show_salary", False):
         salary_str = str(job.get("min_salary", 0)) + " - " + str(job.get("max_salary", 0))
     else:
-        salary_str = "Not disclosed"
+        salary_str = "Undisclosed"
 
     application["job"] =  {
             "title": job.get("title", ""),

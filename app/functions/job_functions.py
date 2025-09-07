@@ -25,7 +25,8 @@ def list_jobs():
     # Auto-mark expired jobs before listing
     _auto_mark_expired(now)
     two_days_ago = now - timedelta(days=2)
-    jobs = db.jobs.find({}, {"_id": 0})
+    # Newest first
+    jobs = db.jobs.find({}, {"_id": 0}).sort("posted_at", -1)
     job_list = []
     for job in jobs:
         # Ensure posted_at has timezone info for comparison

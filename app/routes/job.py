@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Request, HTTPException, Header
+from fastapi.responses import StreamingResponse
 from app.functions import job_functions, auth_functions, subscription_functions
 from app.utils.jwt_handler import verify_token
 from app.db import db
 from app.utils.timezone_utils import get_ist_now
 from app.config.settings import BASE_URL
+from app.utils import event_stream
+import asyncio
 
 router = APIRouter()
 
@@ -57,6 +60,21 @@ async def post_job(request: Request, authorization: str = Header(None)):
     # Set job visibility, default to public if not provided
     data["visibility"] = data.get("visibility", "public")
     result = job_functions.create_job(data)
+    # Broadcast SSE event about new job (best-effort, no await failure)
+    try:
+        job_doc = db.jobs.find_one({"job_id": result.get("job_id")}, {"_id": 0, "job_id": 1, "title": 1, "company_id": 1, "location": 1, "posted_at": 1})
+        company = None
+        if job_doc and job_doc.get("company_id"):
+            company = db.companies.find_one({"company_id": job_doc["company_id"]}, {"_id": 0, "company_name": 1, "logo": 1, "company_id": 1})
+        await event_stream.publish({
+            "type": "job_created",
+            "job": {
+                **(job_doc or {}),
+                "company": company
+            }
+        })
+    except Exception:
+        pass
     return result
 
 @router.get("/list")
@@ -259,3 +277,20 @@ async def get_jobs_by_company(company_id: str):
         "status": "active"
     }, {"_id": 0}))
     return {"jobs": jobs}
+
+@router.get("/stream")
+async def stream_new_jobs():
+    """Server-Sent Events stream for new job notifications."""
+    q = await event_stream.subscribe()
+
+    async def event_generator():
+        async for chunk in event_stream.sse_event_generator(q):
+            yield chunk
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": "*",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
