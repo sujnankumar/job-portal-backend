@@ -86,6 +86,14 @@ def ensure_subscription_indexes():
         logger.debug("subscriptions index create skipped: %s", e)
 
     try:
+        db.subscription_members.create_index([("subscription_id", 1)])
+        db.subscription_members.create_index([("employer_email", 1)])
+        db.subscription_members.create_index([("owner_id", 1)])
+        db.subscription_members.create_index([("status", 1)])
+    except Exception as e:
+        logger.debug("subscription_members index create skipped: %s", e)
+
+    try:
         db.subscription_orders.create_index([("merchant_transaction_id", 1)], unique=True)
         db.subscription_orders.create_index([("employer_id", 1), ("status", 1)])
         db.subscription_orders.create_index([("plan_id", 1)])
@@ -183,16 +191,25 @@ def _resolve_plan(sub: dict | None):
 def get_effective_subscription(employer_id: str):
     """Fetch the effective active subscription."""
     now = get_ist_now()
-    user = db.users.find_one({"user_id": employer_id}, {"company_id": 1, "_id": 0})
+    user = db.users.find_one({"user_id": employer_id}, {"company_id": 1, "email": 1, "_id": 0})
     company_id = user.get("company_id") if user else None
+    user_email = user.get("email") if user else None
 
+    # Look for direct subscriptions and company enterprise subscriptions
+    query_conditions = [
+        {"employer_id": employer_id}  # Direct subscription
+    ]
+    
+    if company_id:
+        query_conditions.append({
+            "company_id": company_id, 
+            "plan_id": "enterprise"
+        })  # Company enterprise subscription
+    
     subs_cursor = db.subscriptions.find({
         "status": "active",
         "expires_at": {"$gt": now},
-        "$or": [
-            {"employer_id": employer_id},
-            {"company_id": company_id, "plan_id": "enterprise"} if company_id else {"employer_id": employer_id},
-        ],
+        "$or": query_conditions
     })
 
     personal = None
@@ -204,7 +221,15 @@ def get_effective_subscription(employer_id: str):
         if s.get("plan_id") == "enterprise":
             enterprise = s
 
+    # Priority: personal subscription > enterprise company subscription
     chosen = personal or enterprise
+    
+    # If no subscription found, check for team membership via premium plans
+    if not chosen and user_email:
+        team_sub = get_employer_subscription_access(user_email)
+        if team_sub:
+            chosen = team_sub
+    
     if chosen:
         chosen.pop("_id", None)
     return chosen
@@ -769,3 +794,157 @@ def create_pending_order(employer_id: str, plan_id: str, merchant_transaction_id
             },
             upsert=True,
         )
+
+# ---------------- Team Member Management ----------------
+
+def add_subscription_member(subscription_id: str, owner_id: str, employer_email: str, 
+                          invited_by: str | None = None):
+    """Add a member to a premium or enterprise subscription."""
+    sub = _subscription_collection().find_one({"subscription_id": subscription_id})
+    if not sub:
+        return {"success": False, "error": "Subscription not found"}
+    
+    plan_id = sub.get("plan_id")
+    if plan_id not in ["premium", "enterprise"]:
+        return {"success": False, "error": "Team members only available for Premium and Enterprise plans"}
+    
+    # Check current member count
+    current_members = db.subscription_members.count_documents({
+        "subscription_id": subscription_id, 
+        "status": "active"
+    })
+    
+    # Check limits
+    if plan_id == "premium" and current_members >= 4:  # Owner + 4 members = 5 total
+        return {"success": False, "error": "Premium plan allows maximum 4 additional members"}
+    
+    # Check if member already exists
+    existing = db.subscription_members.find_one({
+        "subscription_id": subscription_id,
+        "employer_email": employer_email.lower()
+    })
+    
+    if existing:
+        if existing.get("status") == "active":
+            return {"success": False, "error": "Member already exists"}
+        else:
+            # Reactivate existing member
+            db.subscription_members.update_one(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "status": "active",
+                        "invited_by": invited_by,
+                        "updated_at": get_ist_now()
+                    }
+                }
+            )
+            return {"success": True, "message": "Member reactivated"}
+    
+    # Add new member
+    member_data = {
+        "subscription_id": subscription_id,
+        "owner_id": owner_id,
+        "employer_email": employer_email.lower(),
+        "status": "active",
+        "invited_by": invited_by,
+        "created_at": get_ist_now(),
+        "updated_at": get_ist_now()
+    }
+    
+    db.subscription_members.insert_one(member_data)
+    return {"success": True, "message": "Member added successfully"}
+
+def remove_subscription_member(subscription_id: str, employer_email: str):
+    """Remove a member from subscription."""
+    result = db.subscription_members.update_one(
+        {
+            "subscription_id": subscription_id,
+            "employer_email": employer_email.lower()
+        },
+        {
+            "$set": {
+                "status": "removed",
+                "updated_at": get_ist_now()
+            }
+        }
+    )
+    
+    if result.modified_count > 0:
+        return {"success": True, "message": "Member removed successfully"}
+    else:
+        return {"success": False, "error": "Member not found"}
+
+def get_subscription_members(subscription_id: str):
+    """Get all active members of a subscription."""
+    members = list(db.subscription_members.find(
+        {
+            "subscription_id": subscription_id,
+            "status": "active"
+        },
+        {"_id": 0}
+    ))
+    return members
+
+def get_employer_subscription_access(employer_email: str):
+    """Check if an employer has access through subscription membership."""
+    now = get_ist_now()
+    
+    # Find active memberships
+    memberships = list(db.subscription_members.find({
+        "employer_email": employer_email.lower(),
+        "status": "active"
+    }))
+    
+    for membership in memberships:
+        # Check if the subscription is still active
+        sub = _subscription_collection().find_one({
+            "subscription_id": membership["subscription_id"],
+            "status": "active",
+            "expires_at": {"$gt": now}
+        })
+        
+        if sub:
+            return sub
+    
+    return None
+
+def can_employer_post_job(employer_id: str, employer_email: str = None):
+    """Enhanced version that checks both direct subscription and team membership."""
+    # First check direct subscription
+    allowed, plan_id, message, sub_id = can_post_job(employer_id)
+    if allowed:
+        return allowed, plan_id, message, sub_id
+    
+    # If no direct access and email provided, check team membership
+    if employer_email:
+        team_sub = get_employer_subscription_access(employer_email)
+        if team_sub:
+            plan, plan_id = _resolve_plan(team_sub)
+            # Team members inherit the plan benefits
+            if plan_id in ["premium", "enterprise"]:
+                return True, plan_id, "Access via team membership", team_sub["subscription_id"]
+    
+    return allowed, plan_id, message, sub_id
+
+def get_company_employees_with_subscription_access(company_id: str):
+    """Get all employees of a company that should have subscription access via enterprise plan."""
+    if not company_id:
+        return []
+    
+    # Check if company has active enterprise subscription
+    enterprise_sub = get_company_enterprise_subscription(company_id)
+    if not enterprise_sub:
+        return []
+    
+    # Get all employees of the company
+    employees = list(db.users.find(
+        {
+            "company_id": company_id,
+            "user_type": "employer",
+            "status": {"$ne": "deleted"}
+        },
+        {"user_id": 1, "email": 1, "name": 1, "_id": 0}
+    ))
+    
+    return employees

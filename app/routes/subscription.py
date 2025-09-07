@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
+from pydantic import BaseModel, EmailStr
 import logging
 import hashlib
 import json
@@ -11,6 +12,12 @@ from app.config.settings import PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX, FRONTEND_B
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+class AddMemberRequest(BaseModel):
+    employer_email: EmailStr
+
+class RemoveMemberRequest(BaseModel):
+    employer_email: EmailStr
 
 def _auth_employer(request: Request):
     """Authenticate employer from JWT token."""
@@ -35,15 +42,38 @@ def list_plans():
 
 @router.get("/me")
 def my_subscription(request: Request):
-    """Get current user's subscription."""
+    """Get current user's subscription (direct or via team membership)."""
     user = _auth_employer(request)
-    sub = subs.get_active_subscription(user["user_id"])
-
-    if not sub:
+    
+    # Check direct subscription first
+    direct_sub = subs.get_active_subscription(user["user_id"])
+    
+    # Check team membership access
+    user_doc = db.users.find_one({"user_id": user["user_id"]}, {"email": 1})
+    team_sub = None
+    if user_doc and user_doc.get("email"):
+        team_sub = subs.get_employer_subscription_access(user_doc["email"])
+    
+    # Determine which subscription to return
+    subscription = None
+    access_type = "direct"
+    
+    if direct_sub:
+        subscription = direct_sub
+        access_type = "direct"
+    elif team_sub:
+        subscription = team_sub
+        access_type = "team_member"
+    else:
         # Auto-provision free plan
-        sub = subs.create_or_update_subscription(user["user_id"], "free", "FREE-AUTO")
+        subscription = subs.create_or_update_subscription(user["user_id"], "free", "FREE-AUTO")
+        access_type = "direct"
 
-    return {"subscription": sub}
+    return {
+        "subscription": subscription,
+        "access_type": access_type,
+        "is_owner": access_type == "direct" and subscription.get("employer_id") == user["user_id"]
+    }
 
 @router.post("/initiate/{plan_id}")
 async def initiate_payment(plan_id: str, request: Request):
@@ -237,23 +267,35 @@ def get_usage_stats(employer_id: str, request: Request):
 def can_post_job(request: Request):
     """Check if authenticated employer can post another job. Returns plan status and upgrade message if blocked."""
     user = _auth_employer(request)
+    
+    # Get user email for team membership check
+    user_doc = db.users.find_one({"user_id": user["user_id"]}, {"email": 1})
+    user_email = user_doc.get("email") if user_doc else None
+    
+    # Use enhanced function that checks both direct subscription and team membership
+    allowed, plan_id, message, subscription_id = subs.can_employer_post_job(user["user_id"], user_email)
+    
+    # Get subscription details for usage stats
     sub = subs.get_effective_subscription(user["user_id"])
-    plan, plan_id = subs._resolve_plan(sub) if sub else (subs.PLANS["free"], "free")
-
+    if not sub and user_email:
+        sub = subs.get_employer_subscription_access(user_email)
+    
+    plan, _ = subs._resolve_plan(sub) if sub else (subs.PLANS["free"], "free")
+    
     # Fallback counts
     posts_used_month = sub.get("posts_used_month", 0) if sub else 0
     posts_used_year = sub.get("posts_used_year", 0) if sub else 0
     monthly_limit = plan.get("monthly_post_limit")
     yearly_limit = plan.get("yearly_post_limit")
 
-    allowed = True
     reason = None
-    if yearly_limit is not None and posts_used_year >= yearly_limit:
-        allowed = False
-        reason = "YEARLY_LIMIT"
-    elif monthly_limit is not None and posts_used_month >= monthly_limit:
-        allowed = False
-        reason = "MONTHLY_LIMIT"
+    if not allowed:
+        if yearly_limit is not None and posts_used_year >= yearly_limit:
+            reason = "YEARLY_LIMIT"
+        elif monthly_limit is not None and posts_used_month >= monthly_limit:
+            reason = "MONTHLY_LIMIT"
+        else:
+            reason = "LIMIT_REACHED"
 
     return {
         "allowed": allowed,
@@ -263,4 +305,182 @@ def can_post_job(request: Request):
         "yearly_limit": yearly_limit,
         "posts_used_month": posts_used_month,
         "posts_used_year": posts_used_year,
+        "message": message,
+        "subscription_id": subscription_id
+    }
+
+# ---------------- Team Management Endpoints ----------------
+
+@router.post("/members/add")
+def add_team_member(request: Request, member_request: AddMemberRequest):
+    """Add a team member to premium or enterprise subscription."""
+    user = _auth_employer(request)
+    
+    # Get user's active subscription
+    sub = subs.get_effective_subscription(user["user_id"])
+    if not sub:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    
+    plan_id = sub.get("plan_id")
+    if plan_id not in ["premium", "enterprise"]:
+        raise HTTPException(status_code=403, detail="Team members only available for Premium and Enterprise plans")
+    
+    # Verify the requesting user is the subscription owner
+    if sub.get("employer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only subscription owner can add members")
+    
+    # Check if the email being added is a valid employer
+    target_user = db.users.find_one({
+        "email": member_request.employer_email.lower(),
+        "user_type": "employer"
+    })
+    
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Employer with this email not found")
+    
+    # For enterprise plans, check if the target user is from the same company
+    if plan_id == "enterprise":
+        user_doc = db.users.find_one({"user_id": user["user_id"]}, {"company_id": 1})
+        target_company = target_user.get("company_id")
+        owner_company = user_doc.get("company_id") if user_doc else None
+        
+        if not owner_company or target_company != owner_company:
+            raise HTTPException(status_code=403, detail="Enterprise plan members must be from the same company")
+    
+    result = subs.add_subscription_member(
+        sub["subscription_id"], 
+        user["user_id"], 
+        member_request.employer_email,
+        user["user_id"]
+    )
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    return {"message": result["message"], "subscription_id": sub["subscription_id"]}
+
+@router.post("/members/remove")
+def remove_team_member(request: Request, member_request: RemoveMemberRequest):
+    """Remove a team member from subscription."""
+    user = _auth_employer(request)
+    
+    # Get user's active subscription
+    sub = subs.get_effective_subscription(user["user_id"])
+    if not sub:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    
+    # Verify the requesting user is the subscription owner
+    if sub.get("employer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only subscription owner can remove members")
+    
+    result = subs.remove_subscription_member(sub["subscription_id"], member_request.employer_email)
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    return {"message": result["message"]}
+
+@router.get("/members")
+def list_team_members(request: Request):
+    """List all team members of the subscription."""
+    user = _auth_employer(request)
+    
+    # Get user's active subscription
+    sub = subs.get_effective_subscription(user["user_id"])
+    if not sub:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    
+    plan_id = sub.get("plan_id")
+    if plan_id not in ["premium", "enterprise"]:
+        return {"members": [], "plan_id": plan_id, "message": "Team members only available for Premium and Enterprise plans"}
+    
+    members = subs.get_subscription_members(sub["subscription_id"])
+    
+    # Enrich with user details
+    enriched_members = []
+    for member in members:
+        user_details = db.users.find_one(
+            {"email": member["employer_email"]},
+            {"name": 1, "email": 1, "company_name": 1, "_id": 0}
+        )
+        if user_details:
+            member.update(user_details)
+        enriched_members.append(member)
+    
+    # Get limits
+    max_members = 4 if plan_id == "premium" else None
+    current_count = len(members)
+    
+    return {
+        "members": enriched_members,
+        "plan_id": plan_id,
+        "current_count": current_count,
+        "max_members": max_members,
+        "can_add_more": max_members is None or current_count < max_members
+    }
+
+@router.get("/access-check")
+def check_subscription_access(request: Request):
+    """Check if employer has subscription access (direct or via team membership)."""
+    user = _auth_employer(request)
+    
+    # Check direct subscription
+    direct_sub = subs.get_effective_subscription(user["user_id"])
+    
+    # Check team membership access
+    user_doc = db.users.find_one({"user_id": user["user_id"]}, {"email": 1})
+    team_sub = None
+    if user_doc and user_doc.get("email"):
+        team_sub = subs.get_employer_subscription_access(user_doc["email"])
+    
+    access_type = None
+    active_sub = None
+    
+    if direct_sub:
+        access_type = "direct"
+        active_sub = direct_sub
+    elif team_sub:
+        access_type = "team_member"
+        active_sub = team_sub
+    
+    if not active_sub:
+        # Auto-provision free plan
+        active_sub = subs.create_or_update_subscription(user["user_id"], "free", "FREE-AUTO")
+        access_type = "direct"
+    
+    plan, plan_id = subs._resolve_plan(active_sub)
+    
+    return {
+        "has_access": True,
+        "access_type": access_type,
+        "subscription": active_sub,
+        "plan_id": plan_id,
+        "plan": plan
+    }
+
+@router.get("/company-employees")
+def get_company_employees_access(request: Request):
+    """Get all employees who have access via enterprise subscription."""
+    user = _auth_employer(request)
+    
+    # Get user's company
+    user_doc = db.users.find_one({"user_id": user["user_id"]}, {"company_id": 1})
+    if not user_doc or not user_doc.get("company_id"):
+        raise HTTPException(status_code=404, detail="User not associated with any company")
+    
+    company_id = user_doc["company_id"]
+    
+    # Check if there's an active enterprise subscription for this company
+    enterprise_sub = subs.get_company_enterprise_subscription(company_id)
+    if not enterprise_sub:
+        return {"employees": [], "message": "No enterprise subscription found for company"}
+    
+    # Get all employees with access
+    employees = subs.get_company_employees_with_subscription_access(company_id)
+    
+    return {
+        "employees": employees,
+        "company_id": company_id,
+        "subscription_id": enterprise_sub["subscription_id"],
+        "plan_id": enterprise_sub["plan_id"]
     }

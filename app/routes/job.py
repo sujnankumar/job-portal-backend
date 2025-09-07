@@ -27,10 +27,31 @@ async def post_job(request: Request, authorization: str = Header(None)):
         raise HTTPException(status_code=403, detail="Only employers can post jobs")
     data = await request.json()
     user = auth_functions.get_user_by_id(payload.get("user_id"))
-    # Enforce subscription posting limits (atomic)
-    can_post, plan_id, reason, subscription_id = subscription_functions.attempt_post_job(payload.get("user_id"))
+    
+    # Get user email for team membership check
+    user_email = user.get("email") if user else None
+    
+    # Enforce subscription posting limits (atomic) - now includes team membership check
+    can_post, plan_id, reason, subscription_id = subscription_functions.can_employer_post_job(
+        payload.get("user_id"), 
+        user_email
+    )
     if not can_post:
         raise HTTPException(status_code=403, detail=f"Cannot post job: {reason}. Upgrade your plan.")
+    
+    # If posting is allowed, attempt to post the job (increments counters)
+    attempt_success, attempt_plan, attempt_reason, attempt_sub_id = subscription_functions.attempt_post_job(payload.get("user_id"))
+    if not attempt_success:
+        # If team member, try to increment on the team subscription
+        if user_email:
+            team_sub = subscription_functions.get_employer_subscription_access(user_email)
+            if team_sub:
+                subscription_functions.increment_post_counters(payload.get("user_id"), team_sub["subscription_id"])
+            else:
+                raise HTTPException(status_code=403, detail=f"Cannot post job: {attempt_reason}")
+        else:
+            raise HTTPException(status_code=403, detail=f"Cannot post job: {attempt_reason}")
+    
     data["employer_id"] = payload.get("user_id")
     data["company_id"] = user.get("company_id", "")
     # Set job visibility, default to public if not provided
