@@ -165,7 +165,7 @@ async def get_job_applications(job_id: str, authorization: str = Header(None)):
     # Get company info
     employer = db.users.find_one({"user_id": job.get("employer_id")}, {"_id": 0, "company_name": 1})
     company_name = employer["company_name"] if employer and "company_name" in employer else None
-    company_logo = job.get("logo", "/abstract-geometric-logo.png")
+    company_logo = job.get("logo", "/default-company-logo.png")
     # Job details
     job_details = {
         "id": job["job_id"],
